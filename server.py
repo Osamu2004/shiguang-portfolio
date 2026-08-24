@@ -50,6 +50,12 @@ def db():
       day TEXT PRIMARY KEY, market_value TEXT NOT NULL, source TEXT NOT NULL,
       created_at TEXT NOT NULL
     )""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS coins (id TEXT PRIMARY KEY,name TEXT NOT NULL,series TEXT,
+      issue_year INTEGER,face_value TEXT NOT NULL DEFAULT '0',material TEXT,image_path TEXT,
+      image_source TEXT,image_license TEXT,updated_at TEXT NOT NULL)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS coin_collection (coin_id TEXT PRIMARY KEY,quantity INTEGER NOT NULL,
+      grade TEXT,purchase_price TEXT NOT NULL,estimated_value TEXT NOT NULL,storage_location TEXT,notes TEXT,
+      updated_at TEXT NOT NULL,FOREIGN KEY(coin_id) REFERENCES coins(id))""")
     return conn
 
 
@@ -188,6 +194,10 @@ class Handler(SimpleHTTPRequestHandler):
             from sync_engine import load_config
             self.json_response(load_config())
             return
+        if self.path == "/api/coins":
+            with db() as conn:
+                rows=[dict(r) for r in conn.execute("SELECT c.*,x.quantity,x.grade,x.purchase_price,x.estimated_value,x.storage_location,x.notes FROM coins c LEFT JOIN coin_collection x ON x.coin_id=c.id ORDER BY c.issue_year DESC")]
+            self.json_response({"coins":rows}); return
         super().do_GET()
 
     def do_POST(self):
@@ -223,6 +233,16 @@ class Handler(SimpleHTTPRequestHandler):
                 password = str(self.read_json().get("password", ""))
                 self.json_response(sync(DB, password))
                 return
+            if self.path == "/api/coins":
+                raw=self.read_json(); name=str(raw.get("name","")).strip()[:100]
+                if not name: raise ValueError("请填写纪念币名称")
+                coin_id=str(raw.get("id") or hashlib.sha256(name.encode()).hexdigest()[:16]); now=datetime.now().isoformat(timespec="seconds")
+                qty=int(raw.get("quantity") or 0)
+                if qty<0: raise ValueError("数量不正确")
+                with db() as conn:
+                    conn.execute("INSERT OR REPLACE INTO coins VALUES(?,?,?,?,?,?,?,?,?,?)",(coin_id,name,str(raw.get("series",""))[:60],int(raw["issue_year"]) if raw.get("issue_year") else None,money(raw.get("face_value",0)),str(raw.get("material",""))[:40],None,"self","self-owned",now))
+                    conn.execute("INSERT OR REPLACE INTO coin_collection VALUES(?,?,?,?,?,?,?,?)",(coin_id,qty,str(raw.get("grade",""))[:30],money(raw.get("purchase_price",0)),money(raw.get("estimated_value",0)),str(raw.get("storage_location",""))[:80],str(raw.get("notes",""))[:500],now))
+                self.json_response({"ok":True,"id":coin_id}); return
             self.json_response({"error": "未知接口"}, 404)
         except Exception as exc:
             self.json_response({"error": str(exc)}, 400)

@@ -26,4 +26,9 @@ class SyncTest(unittest.TestCase):
         merged = sync.merge_vaults(new, old)
         self.assertEqual(merged["tables"]["holdings"][0]["market_value"], "20")
 
+    def test_coin_metadata_is_merged(self):
+        local={"updatedAt":"2","tables":{"coins":[{"id":"coin-1","name":"A","updated_at":"2"}]}}
+        merged=sync.merge_vaults(local,{"updatedAt":"1","tables":{}})
+        self.assertEqual(merged["tables"]["coins"][0]["id"],"coin-1")
+
 if __name__ == "__main__": unittest.main()

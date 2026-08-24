@@ -64,7 +64,7 @@ def export_data(db_path):
     conn = sqlite3.connect(str(db_path)); conn.row_factory = sqlite3.Row
     try:
         tables = {}
-        for name in ("holdings", "health_daily", "portfolio_snapshots"):
+        for name in ("holdings", "health_daily", "portfolio_snapshots", "coins", "coin_collection"):
             exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
             tables[name] = [dict(r) for r in conn.execute("SELECT * FROM " + name)] if exists else []
         return {"schemaVersion": 1, "updatedAt": datetime.now(timezone.utc).isoformat(), "tables": tables}
@@ -75,6 +75,8 @@ def export_data(db_path):
 def _record_key(table, row):
     if table in ("health_daily", "portfolio_snapshots"):
         return str(row["day"])
+    if table == "coins": return str(row["id"])
+    if table == "coin_collection": return str(row["coin_id"])
     return str(row.get("code") or "name:" + row["name"])
 
 
@@ -82,7 +84,7 @@ def merge_vaults(local, remote):
     if not remote:
         return local
     result = {"schemaVersion": 1, "updatedAt": max(local.get("updatedAt", ""), remote.get("updatedAt", "")), "tables": {}}
-    for table in ("holdings", "health_daily", "portfolio_snapshots"):
+    for table in ("holdings", "health_daily", "portfolio_snapshots", "coins", "coin_collection"):
         merged = {}
         for source in (remote, local):
             for row in source.get("tables", {}).get(table, []):
@@ -115,6 +117,10 @@ def import_data(db_path, payload):
         for row in payload["tables"].get("portfolio_snapshots", []):
             conn.execute("INSERT OR REPLACE INTO portfolio_snapshots VALUES(?,?,?,?)", tuple(row.get(k) for k in
               ("day","market_value","source","created_at")))
+        for row in payload["tables"].get("coins", []):
+            conn.execute("INSERT OR REPLACE INTO coins VALUES(?,?,?,?,?,?,?,?,?,?)",tuple(row.get(k) for k in ("id","name","series","issue_year","face_value","material","image_path","image_source","image_license","updated_at")))
+        for row in payload["tables"].get("coin_collection", []):
+            conn.execute("INSERT OR REPLACE INTO coin_collection VALUES(?,?,?,?,?,?,?,?)",tuple(row.get(k) for k in ("coin_id","quantity","grade","purchase_price","estimated_value","storage_location","notes","updated_at")))
         conn.commit()
     finally:
         conn.close()

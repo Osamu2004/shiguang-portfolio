@@ -1,3 +1,4 @@
 cryptography>=41,<46
 keyring>=24,<26
 pywebview>=5,<7
+Pillow>=10,<12
