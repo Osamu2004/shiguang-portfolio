@@ -7,6 +7,8 @@ import os
 import re
 import sqlite3
 import sys
+import threading
+import time
 import csv
 import io
 from datetime import datetime
@@ -123,6 +125,9 @@ class Handler(SimpleHTTPRequestHandler):
             with db() as conn:
                 rows=[dict(r) for r in conn.execute("SELECT c.*,x.quantity,x.grade,x.purchase_price,x.estimated_value,x.storage_location,x.notes FROM coins c LEFT JOIN coin_collection x ON x.coin_id=c.id ORDER BY c.issue_year DESC")]
             self.json_response({"coins":rows}); return
+        if self.path == "/api/update/check":
+            from updater import check
+            self.json_response(check()); return
         super().do_GET()
 
     def do_POST(self):
@@ -162,6 +167,13 @@ class Handler(SimpleHTTPRequestHandler):
                     conn.execute("INSERT OR REPLACE INTO coins VALUES(?,?,?,?,?,?,?,?,?,?)",(coin_id,name,str(raw.get("series",""))[:60],int(raw["issue_year"]) if raw.get("issue_year") else None,money(raw.get("face_value",0)),str(raw.get("material",""))[:40],None,"self","self-owned",now))
                     conn.execute("INSERT OR REPLACE INTO coin_collection VALUES(?,?,?,?,?,?,?,?)",(coin_id,qty,str(raw.get("grade",""))[:30],money(raw.get("purchase_price",0)),money(raw.get("estimated_value",0)),str(raw.get("storage_location",""))[:80],str(raw.get("notes",""))[:500],now))
                 self.json_response({"ok":True,"id":coin_id}); return
+            if self.path == "/api/update/token":
+                from updater import store_token
+                store_token(str(self.read_json().get("token", ""))); self.json_response({"ok": True}); return
+            if self.path == "/api/update/install":
+                from updater import stage_and_install
+                result = stage_and_install(); self.json_response(result)
+                threading.Thread(target=lambda: (time.sleep(1), os._exit(0)), daemon=True).start(); return
             self.json_response({"error": "未知接口"}, 404)
         except Exception as exc:
             self.json_response({"error": str(exc)}, 400)

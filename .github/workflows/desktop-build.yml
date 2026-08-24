@@ -6,7 +6,7 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -34,8 +34,40 @@ jobs:
       - name: Build macOS
         if: runner.os == 'macOS'
         run: pyinstaller --noconfirm --clean --windowed --name Shiguang --collect-all webview --add-data "static:static" desktop.py
+      - name: Package Windows update
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path dist/Shiguang -DestinationPath Shiguang-Windows.zip
+      - name: Package macOS update
+        if: runner.os == 'macOS'
+        run: ditto -c -k --keepParent dist/Shiguang.app Shiguang-macOS.zip
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
           path: ${{ matrix.path }}
           if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: update-${{ matrix.artifact }}
+          path: Shiguang-*.zip
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: update-*
+          merge-multiple: true
+          path: release
+      - name: Create checksums
+        run: |
+          cd release
+          sha256sum Shiguang-Windows.zip > Shiguang-Windows.zip.sha256
+          sha256sum Shiguang-macOS.zip > Shiguang-macOS.zip.sha256
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" release/* --repo "${{ github.repository }}" --generate-notes --title "拾光 ${{ github.ref_name }}"

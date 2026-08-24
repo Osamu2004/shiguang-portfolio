@@ -10,6 +10,7 @@
 - 每日步数、睡眠、静息心率、活动能量和体重
 - 健康CSV导入，支持中英文列名
 - 财务与健康数据的JSON完整备份
+- 从私有 GitHub Releases 自动检查、校验并安装桌面更新
 - 手机、Mac和Windows的响应式界面与PWA安装
 
 ## 安全设计
@@ -86,6 +87,10 @@ PyInstaller不支持在Linux上交叉构建真正的Windows `.exe` 或macOS `.ap
 
 - macOS: `~/Library/Application Support/Shiguang`
 - Windows: `%LOCALAPPDATA%\Shiguang`
+
+### 自动更新
+
+应用启动后会检查私有源码仓库的最新 Release。首次使用时，在“数据同步 → 软件更新”中保存一个仅授予源码仓库 Contents 读取权限的 fine-grained Token。Token 只进入系统凭据库。更新包必须同时通过 Release 中的 SHA-256 校验，确认后才会替换程序并重启；个人数据库不会被修改。
 
 ## 与参考项目的关系
 
