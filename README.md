@@ -94,6 +94,13 @@ bash build_macos.sh
 
 PyInstaller不支持在Linux上交叉构建真正的Windows `.exe` 或macOS `.app`，因此两种成品需分别在对应系统上打包。
 
+仓库已提供 `Desktop builds` GitHub Actions。在 Actions 页手动运行，即可于Windows和macOS托管机分别生成可下载构建产物。当前产物未进行Apple Developer ID或Windows Authenticode签名，仅适合个人测试。
+
+桌面数据目录：
+
+- macOS: `~/Library/Application Support/Shiguang`
+- Windows: `%LOCALAPPDATA%\Shiguang`
+
 ## 与参考项目的关系
 
 产品流程参考了 [LuoDi-Nate/financial-management](https://github.com/LuoDi-Nate/financial-management) 的持仓截图导入理念，但本项目的名称、界面、代码和数据模型均为独立实现。

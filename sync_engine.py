@@ -19,7 +19,7 @@ from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.backends import default_backend
 
 ROOT = Path(__file__).resolve().parent
-CONFIG = ROOT / "data" / "sync-config.json"
+CONFIG = Path(os.getenv("SHIGUANG_DATA_DIR", str(ROOT / "data"))) / "sync-config.json"
 MAGIC = "SGV1"
 AAD = b"shiguang-vault-v1"
 ITERATIONS = 600_000

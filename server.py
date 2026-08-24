@@ -17,9 +17,9 @@ from decimal import Decimal, InvalidOperation
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 STATIC = ROOT / "static"
-DATA = ROOT / "data"
+DATA = Path(os.getenv("SHIGUANG_DATA_DIR", str(Path(__file__).resolve().parent / "data")))
 UPLOADS = DATA / "uploads"
 DB = DATA / "portfolio.db"
 MAX_IMAGE = 8 * 1024 * 1024

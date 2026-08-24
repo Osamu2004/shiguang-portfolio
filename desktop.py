@@ -1,7 +1,21 @@
 """Windows/macOS desktop entry point. Falls back to the system browser."""
+import os
+import platform
 import threading
 import webbrowser
+from pathlib import Path
 from http.server import ThreadingHTTPServer
+
+system = platform.system()
+if system == "Darwin":
+    data_dir = Path.home() / "Library" / "Application Support" / "Shiguang"
+elif system == "Windows":
+    data_dir = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "Shiguang"
+else:
+    data_dir = Path(os.getenv("XDG_DATA_HOME", str(Path.home() / ".local" / "share"))) / "shiguang"
+data_dir.mkdir(parents=True, exist_ok=True)
+os.environ["SHIGUANG_DATA_DIR"] = str(data_dir)
+
 from server import Handler, db
 
 

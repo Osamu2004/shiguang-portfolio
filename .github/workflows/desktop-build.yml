@@ -1,0 +1,41 @@
+name: Desktop builds
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: Shiguang-Windows
+            path: dist/Shiguang
+          - os: macos-latest
+            artifact: Shiguang-macOS
+            path: dist/Shiguang.app
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements-desktop.txt pyinstaller
+      - name: Build Windows
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: pyinstaller --noconfirm --clean --windowed --name Shiguang --collect-all webview --add-data "static;static" desktop.py
+      - name: Build macOS
+        if: runner.os == 'macOS'
+        run: pyinstaller --noconfirm --clean --windowed --name Shiguang --collect-all webview --add-data "static:static" desktop.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.path }}
+          if-no-files-found: error
