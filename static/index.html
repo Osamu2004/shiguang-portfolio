@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN"><head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#14251e"><title>拾光投资</title>
+  <link rel="stylesheet" href="/style.css">
+</head><body>
+<header><a class="brand" href="#"><span class="seal">拾</span><span>拾光投资<small>PORTFOLIO NOTEBOOK</small></span></a><button class="privacy" id="privacy">隐藏金额</button></header>
+<div class="shell">
+  <aside><nav><button class="active" data-page="dashboard">总览</button><button data-page="holdings">持仓</button><button data-page="import">截图导入</button><button data-page="advice">配置建议</button></nav><div class="aside-note">数据默认只在你的设备上<br><b>不读取支付宝账号</b></div></aside>
+  <main>
+    <section class="page active" id="dashboard">
+      <div class="eyebrow">个人投资总览</div><h1>看清自己的钱，再决定下一步</h1>
+      <div class="hero-grid"><article class="total-card"><span>当前持仓市值</span><strong class="money" id="total">¥0.00</strong><p>最近更新 <b id="updated">尚未导入</b></p><div class="line-chart"><i></i><i></i><i></i><i></i><i></i><svg viewBox="0 0 500 90" preserveAspectRatio="none"><path d="M0 76 C65 68 80 42 140 51 S220 68 280 38 S370 45 500 12"/></svg></div></article><article class="allocation"><div class="card-head"><b>配置透视</b><span>按持仓市值</span></div><div class="donut" id="donut"><div><strong id="fundCount">0</strong><small>只基金</small></div></div><div id="legend" class="legend"></div></article></div>
+      <div class="section-head"><div><span>持仓速览</span><h2>我的基金</h2></div><button class="primary" data-go="import">从截图更新</button></div><div class="holding-list" id="holdingList"></div>
+    </section>
+    <section class="page" id="holdings"><div class="eyebrow">手动维护</div><h1>持仓账本</h1><form id="holdingForm" class="paper form"><label>基金代码<input name="code" maxlength="6" placeholder="例如 000001"></label><label>基金名称<input name="name" required placeholder="支付宝中显示的完整名称"></label><label>当前市值<input name="market_value" required inputmode="decimal" placeholder="0.00"></label><button class="primary" type="submit">添加持仓</button></form><div class="holding-list" id="holdingList2"></div></section>
+    <section class="page" id="import"><div class="eyebrow">智能填报</div><h1>拍一张持仓截图，核对后再入账</h1><p class="lead">识别结果绝不会直接覆盖你的数据。金额模糊或名称截断时，请以支付宝页面为准。</p>
+      <div class="privacy-banner"><b id="visionMode">演示识别模式</b><span id="visionHint">未配置视觉模型，上传后会生成两条演示数据。</span></div>
+      <label class="dropzone" id="dropzone"><input id="imageInput" type="file" accept="image/jpeg,image/png,image/webp"><span class="upload-icon">↑</span><strong>点击选择或拖入截图</strong><small>JPG / PNG / WebP，单张不超过8MB</small><img id="preview" alt="截图预览"></label>
+      <button class="primary wide" id="scan" disabled>开始识别</button><div id="scanStatus" class="status"></div>
+      <div id="review" hidden><div class="section-head"><div><span>人工确认</span><h2>旧持仓 → 新识别</h2></div></div><div id="changes" class="changes"></div><label class="check"><input id="deleteImage" type="checkbox" checked>入账后删除原截图</label><button class="primary wide" id="confirm">确认并更新持仓</button></div>
+    </section>
+    <section class="page" id="advice"><div class="eyebrow">规则引擎</div><h1>配置提示，不替你猜涨跌</h1><div class="advice-grid"><article class="paper"><span>集中度</span><strong id="concentration">等待持仓</strong><p id="concentrationText">导入后检查单只基金占比。</p></article><article class="paper"><span>本月新增资金</span><strong>优先补低配类别</strong><p>不为了“回本”追加，只按你设定的目标区间再平衡。</p></article><article class="paper warning"><span>学生默认护栏</span><strong>生活费不进风险资产</strong><p>先预留应急资金；不使用花呗、信用卡或借款投资。</p></article></div><p class="disclaimer">本页只提供组合结构检查和投资教育信息，不构成基金推荐或收益承诺。</p></section>
+  </main>
+</div><div id="toast"></div><script src="/app.js"></script></body></html>
