@@ -1,11 +1,12 @@
 # 拾光投资
 
-一个本地优先的中文个人管理工具，同时管理基金持仓与日常健康趋势。重点流程是“支付宝持仓截图 → 视觉识别 → 差异对账 → 人工确认入账”。
+一个本地优先的中文个人管理工具，同时管理基金持仓、纪念币收藏与日常健康趋势。
 
 ## 现有功能
 
 - 基金持仓总览、占比和集中度提示
-- 支付宝持仓截图的视觉识别与人工复核
+- 基金持仓手动维护
+- 纪念币藏品、数量、成本与估值统计
 - 每日步数、睡眠、静息心率、活动能量和体重
 - 健康CSV导入，支持中英文列名
 - 财务与健康数据的JSON完整备份
@@ -14,10 +15,8 @@
 ## 安全设计
 
 - 不读取支付宝账号、Cookie、密码或支付信息。
-- 视觉模型只做转写，不直接修改数据库。
-- 识别后展示新增、更新、未识别三类差异；“未识别”默认不删除。
-- 确认入账后可自动删除原截图。
-- 数据库和截图目录已加入 `.gitignore`。
+- 不包含视觉模型，不上传持仓截图。
+- 数据库目录已加入 `.gitignore`。
 
 ## 本地运行
 
@@ -28,19 +27,6 @@ python3 server.py
 ```
 
 浏览器打开 <http://127.0.0.1:8787>。
-
-## 启用真实截图识别
-
-默认是透明的演示模式：它不会读图，只返回两条演示持仓。要接入通义千问 VL：
-
-```bash
-export VISION_API_KEY="你的百炼 API Key"
-export VISION_BASE_URL="https://dashscope.aliyuncs.com/compatible-mode/v1"
-export VISION_MODEL="qwen-vl-max"
-python3 server.py
-```
-
-请先在支付宝截图中遮挡姓名、账号、会员信息等与持仓无关的内容。第三方模型的数据处理规则以对方最新条款为准。
 
 ## 测试
 
@@ -103,7 +89,7 @@ PyInstaller不支持在Linux上交叉构建真正的Windows `.exe` 或macOS `.ap
 
 ## 与参考项目的关系
 
-产品流程参考了 [LuoDi-Nate/financial-management](https://github.com/LuoDi-Nate/financial-management) 的持仓截图导入理念，但本项目的名称、界面、代码和数据模型均为独立实现。
+界面设计参考了 [LuoDi-Nate/financial-management](https://github.com/LuoDi-Nate/financial-management) 的公开设计语言，但本项目的名称、界面代码、业务代码和数据模型均为独立实现。
 
 ## 免责声明
 
