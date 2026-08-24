@@ -4,3 +4,7 @@ __pycache__/
 .env
 .DS_Store
 .coverage
+data/sync-config.json
+build/
+dist/
+*.spec

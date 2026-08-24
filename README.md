@@ -62,6 +62,38 @@ Apple HealthKit 和 Android Health Connect 的自动同步必须由原生手机�
 
 将服务运行在一台长期开机的电脑、NAS或私人服务器上，手机、Mac和Windows通过Tailscale访问同一个服务，即可共用同一份数据。服务默认只绑定 `127.0.0.1`，请勿直接暴露到公网。
 
+## Windows / macOS 加密同步
+
+1. 创建一个与源代码分开的私有仓库，例如 `owner/shiguang-vault`。
+2. 创建 fine-grained GitHub token，仅授予该仓库 Contents 读写权限。
+3. 在应用的“同步”页保存仓库与令牌。令牌进入系统凭据库，不进入SQLite或Git。
+4. 设定至少10个字符的同步密码，并在两台电脑上使用相同密码。
+
+保险库使用 PBKDF2-SHA256（600,000次）派生密钥，再以 AES-256-GCM 认证加密。每次上传都生成新的随机盐和 nonce。GitHub上只存在 `vault.enc`，同步密码不会保存。
+
+### 桌面调试
+
+```bash
+python3 -m pip install -r requirements-desktop.txt
+python3 desktop.py
+```
+
+### 构建安装包
+
+Windows需要在Windows上执行：
+
+```bat
+build_windows.bat
+```
+
+macOS需要在macOS上执行：
+
+```bash
+bash build_macos.sh
+```
+
+PyInstaller不支持在Linux上交叉构建真正的Windows `.exe` 或macOS `.app`，因此两种成品需分别在对应系统上打包。
+
 ## 与参考项目的关系
 
 产品流程参考了 [LuoDi-Nate/financial-management](https://github.com/LuoDi-Nate/financial-management) 的持仓截图导入理念，但本项目的名称、界面、代码和数据模型均为独立实现。

@@ -184,6 +184,10 @@ class Handler(SimpleHTTPRequestHandler):
             self.send_header("Content-Length", str(len(data)))
             self.end_headers(); self.wfile.write(data)
             return
+        if self.path == "/api/sync/config":
+            from sync_engine import load_config
+            self.json_response(load_config())
+            return
         super().do_GET()
 
     def do_POST(self):
@@ -207,6 +211,17 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             if self.path == "/api/health/import":
                 self.handle_health_import()
+                return
+            if self.path == "/api/sync/config":
+                from sync_engine import save_config, store_token
+                raw = self.read_json(); config = save_config(raw)
+                if raw.get("token"): store_token(config["repo"], str(raw["token"]))
+                self.json_response({"ok": True, "config": config})
+                return
+            if self.path == "/api/sync/run":
+                from sync_engine import sync
+                password = str(self.read_json().get("password", ""))
+                self.json_response(sync(DB, password))
                 return
             self.json_response({"error": "未知接口"}, 404)
         except Exception as exc:
