@@ -73,9 +73,8 @@ def clean_item(raw):
 
 def save_asset_snapshot(conn, now):
     fund = Decimal(str(conn.execute("SELECT COALESCE(SUM(market_value + 0),0) FROM holdings").fetchone()[0]))
-    coin = Decimal(str(conn.execute("SELECT COALESCE(SUM(estimated_value + 0),0) FROM coin_collection").fetchone()[0]))
     conn.execute("INSERT OR REPLACE INTO portfolio_snapshots VALUES(?,?,?,?)",
-                 (datetime.now().date().isoformat(), money(fund + coin), "manual", now))
+                 (datetime.now().date().isoformat(), money(fund), "manual", now))
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -181,7 +180,6 @@ class Handler(SimpleHTTPRequestHandler):
                 with db() as conn:
                     conn.execute("INSERT OR REPLACE INTO coins VALUES(?,?,?,?,?,?,?,?,?,?)",(coin_id,name,str(raw.get("series",""))[:60],int(raw["issue_year"]) if raw.get("issue_year") else None,money(raw.get("face_value",0)),str(raw.get("material",""))[:40],None,"self","self-owned",now))
                     conn.execute("INSERT OR REPLACE INTO coin_collection VALUES(?,?,?,?,?,?,?,?)",(coin_id,qty,str(raw.get("grade",""))[:30],money(raw.get("purchase_price",0)),money(raw.get("estimated_value",0)),str(raw.get("storage_location",""))[:80],str(raw.get("notes",""))[:500],now))
-                    save_asset_snapshot(conn, now)
                 self.json_response({"ok":True,"id":coin_id}); return
             if self.path == "/api/update/token":
                 from updater import store_token
