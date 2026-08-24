@@ -10,6 +10,8 @@ import re
 import sqlite3
 import sys
 import urllib.request
+import csv
+import io
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -38,6 +40,15 @@ def db():
     conn.execute("""CREATE TABLE IF NOT EXISTS imports (
       id TEXT PRIMARY KEY, created_at TEXT NOT NULL, image_path TEXT,
       status TEXT NOT NULL, result_json TEXT NOT NULL
+    )""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS health_daily (
+      day TEXT PRIMARY KEY, steps INTEGER, sleep_minutes INTEGER,
+      resting_heart_rate REAL, active_energy REAL, weight REAL,
+      source TEXT NOT NULL DEFAULT 'manual', updated_at TEXT NOT NULL
+    )""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+      day TEXT PRIMARY KEY, market_value TEXT NOT NULL, source TEXT NOT NULL,
+      created_at TEXT NOT NULL
     )""")
     return conn
 
@@ -152,6 +163,27 @@ class Handler(SimpleHTTPRequestHandler):
             total = sum(Decimal(r["market_value"]) for r in rows)
             self.json_response({"holdings": rows, "total": str(total), "demoVision": not bool(os.getenv("VISION_API_KEY"))})
             return
+        if self.path == "/api/health":
+            with db() as conn:
+                rows = [dict(r) for r in conn.execute("SELECT * FROM health_daily ORDER BY day DESC LIMIT 90")]
+            self.json_response({"days": rows})
+            return
+        if self.path == "/api/export":
+            with db() as conn:
+                payload = {
+                    "schemaVersion": 2,
+                    "exportedAt": datetime.now().isoformat(),
+                    "holdings": [dict(r) for r in conn.execute("SELECT * FROM holdings ORDER BY id")],
+                    "healthDaily": [dict(r) for r in conn.execute("SELECT * FROM health_daily ORDER BY day")],
+                    "portfolioSnapshots": [dict(r) for r in conn.execute("SELECT * FROM portfolio_snapshots ORDER BY day")],
+                }
+            data = json.dumps(payload, ensure_ascii=False, indent=2).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Disposition", 'attachment; filename="shiguang-backup.json"')
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers(); self.wfile.write(data)
+            return
         super().do_GET()
 
     def do_POST(self):
@@ -169,6 +201,12 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             if self.path == "/api/import/confirm":
                 self.handle_confirm()
+                return
+            if self.path == "/api/health":
+                self.handle_health()
+                return
+            if self.path == "/api/health/import":
+                self.handle_health_import()
                 return
             self.json_response({"error": "未知接口"}, 404)
         except Exception as exc:
@@ -225,9 +263,90 @@ class Handler(SimpleHTTPRequestHandler):
                     conn.execute("INSERT INTO holdings(code,name,market_value,cost,updated_at) VALUES(?,?,?,?,?)",
                                  (item["code"] or None, item["name"], item["market_value"], item["market_value"], now))
             conn.execute("UPDATE imports SET status='confirmed' WHERE id=?", (import_id,))
+            total = conn.execute("SELECT COALESCE(SUM(market_value + 0),0) FROM holdings").fetchone()[0]
+            today = datetime.now().date().isoformat()
+            conn.execute("INSERT OR REPLACE INTO portfolio_snapshots VALUES(?,?,?,?)",
+                         (today, money(total), "screenshot", now))
         if payload.get("deleteImage", True) and record["image_path"]:
             Path(record["image_path"]).unlink(missing_ok=True)
         self.json_response({"ok": True})
+
+    def handle_health(self):
+        raw = self.read_json()
+        item = validate_health(raw)
+        with db() as conn:
+            upsert_health(conn, item)
+        self.json_response({"ok": True})
+
+    def handle_health_import(self):
+        content_type = self.headers.get("Content-Type", "")
+        if "multipart/form-data" not in content_type:
+            raise ValueError("请上传CSV文件")
+        form = cgi.FieldStorage(fp=self.rfile, headers=self.headers,
+                                environ={"REQUEST_METHOD": "POST", "CONTENT_TYPE": content_type})
+        field = form["file"] if "file" in form else None
+        if field is None or not getattr(field, "file", None):
+            raise ValueError("未选择CSV文件")
+        blob = field.file.read(2 * 1024 * 1024 + 1)
+        if len(blob) > 2 * 1024 * 1024:
+            raise ValueError("CSV不能超过2MB")
+        text = blob.decode("utf-8-sig")
+        reader = csv.DictReader(io.StringIO(text))
+        count = 0
+        with db() as conn:
+            for raw in reader:
+                mapped = map_health_row(raw)
+                upsert_health(conn, validate_health(mapped)); count += 1
+        self.json_response({"ok": True, "count": count})
+
+
+def optional_number(value, kind=float, minimum=0, maximum=None):
+    if value is None or str(value).strip() == "":
+        return None
+    number = kind(str(value).strip())
+    if number < minimum or (maximum is not None and number > maximum):
+        raise ValueError("健康数据超出合理范围")
+    return number
+
+
+def validate_health(raw):
+    day = str(raw.get("day", "")).strip()
+    datetime.strptime(day, "%Y-%m-%d")
+    return {
+        "day": day,
+        "steps": optional_number(raw.get("steps"), int, 0, 200000),
+        "sleep_minutes": optional_number(raw.get("sleep_minutes"), int, 0, 1440),
+        "resting_heart_rate": optional_number(raw.get("resting_heart_rate"), float, 20, 250),
+        "active_energy": optional_number(raw.get("active_energy"), float, 0, 20000),
+        "weight": optional_number(raw.get("weight"), float, 10, 500),
+        "source": str(raw.get("source", "manual"))[:30] or "manual",
+    }
+
+
+def map_health_row(raw):
+    aliases = {
+        "day": ["day", "date", "日期"], "steps": ["steps", "步数"],
+        "sleep_minutes": ["sleep_minutes", "sleep", "睡眠分钟"],
+        "resting_heart_rate": ["resting_heart_rate", "resting_hr", "静息心率"],
+        "active_energy": ["active_energy", "calories", "活动能量"],
+        "weight": ["weight", "weight_kg", "体重"], "source": ["source", "来源"],
+    }
+    normalized = {str(k).strip().lower(): v for k, v in raw.items()}
+    result = {}
+    for target, names in aliases.items():
+        for name in names:
+            if name.lower() in normalized:
+                result[target] = normalized[name.lower()]; break
+    result.setdefault("source", "csv")
+    return result
+
+
+def upsert_health(conn, item):
+    now = datetime.now().isoformat(timespec="seconds")
+    conn.execute("""INSERT OR REPLACE INTO health_daily
+      (day,steps,sleep_minutes,resting_heart_rate,active_energy,weight,source,updated_at)
+      VALUES(?,?,?,?,?,?,?,?)""", (item["day"], item["steps"], item["sleep_minutes"],
+      item["resting_heart_rate"], item["active_energy"], item["weight"], item["source"], now))
 
 
 def main():

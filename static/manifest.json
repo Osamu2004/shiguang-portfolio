@@ -1,0 +1,9 @@
+{
+  "name": "拾光·个人管理",
+  "short_name": "拾光",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fbf8f1",
+  "theme_color": "#14251e",
+  "icons": []
+}

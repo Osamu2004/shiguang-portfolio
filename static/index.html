@@ -1,12 +1,13 @@
 <!doctype html>
 <html lang="zh-CN"><head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#14251e"><title>拾光投资</title>
+  <meta name="theme-color" content="#14251e"><title>拾光·个人管理</title>
+  <link rel="manifest" href="/manifest.json">
   <link rel="stylesheet" href="/style.css">
 </head><body>
 <header><a class="brand" href="#"><span class="seal">拾</span><span>拾光投资<small>PORTFOLIO NOTEBOOK</small></span></a><button class="privacy" id="privacy">隐藏金额</button></header>
 <div class="shell">
-  <aside><nav><button class="active" data-page="dashboard">总览</button><button data-page="holdings">持仓</button><button data-page="import">截图导入</button><button data-page="advice">配置建议</button></nav><div class="aside-note">数据默认只在你的设备上<br><b>不读取支付宝账号</b></div></aside>
+  <aside><nav><button class="active" data-page="dashboard">总览</button><button data-page="holdings">持仓</button><button data-page="import">截图导入</button><button data-page="health">健康</button><button data-page="advice">建议</button></nav><div class="aside-note">财务与健康数据由你掌控<br><a href="/api/export">下载完整备份</a></div></aside>
   <main>
     <section class="page active" id="dashboard">
       <div class="eyebrow">个人投资总览</div><h1>看清自己的钱，再决定下一步</h1>
@@ -21,5 +22,10 @@
       <div id="review" hidden><div class="section-head"><div><span>人工确认</span><h2>旧持仓 → 新识别</h2></div></div><div id="changes" class="changes"></div><label class="check"><input id="deleteImage" type="checkbox" checked>入账后删除原截图</label><button class="primary wide" id="confirm">确认并更新持仓</button></div>
     </section>
     <section class="page" id="advice"><div class="eyebrow">规则引擎</div><h1>配置提示，不替你猜涨跌</h1><div class="advice-grid"><article class="paper"><span>集中度</span><strong id="concentration">等待持仓</strong><p id="concentrationText">导入后检查单只基金占比。</p></article><article class="paper"><span>本月新增资金</span><strong>优先补低配类别</strong><p>不为了“回本”追加，只按你设定的目标区间再平衡。</p></article><article class="paper warning"><span>学生默认护栏</span><strong>生活费不进风险资产</strong><p>先预留应急资金；不使用花呗、信用卡或借款投资。</p></article></div><p class="disclaimer">本页只提供组合结构检查和投资教育信息，不构成基金推荐或收益承诺。</p></section>
+    <section class="page" id="health"><div class="eyebrow">健康日历</div><h1>只记录趋势，不做医疗诊断</h1>
+      <div class="health-kpis"><article class="paper"><span>今日步数</span><strong id="stepsKpi">—</strong></article><article class="paper"><span>睡眠</span><strong id="sleepKpi">—</strong></article><article class="paper"><span>静息心率</span><strong id="heartKpi">—</strong></article><article class="paper"><span>体重</span><strong id="weightKpi">—</strong></article></div>
+      <div class="health-layout"><form id="healthForm" class="paper health-form"><h2>记录一天</h2><label>日期<input type="date" name="day" required></label><label>步数<input type="number" name="steps" min="0"></label><label>睡眠分钟<input type="number" name="sleep_minutes" min="0" max="1440"></label><label>静息心率<input type="number" name="resting_heart_rate" min="20" max="250"></label><label>体重 kg<input type="number" step="0.1" name="weight" min="10"></label><button class="primary" type="submit">保存记录</button></form><div class="paper"><div class="card-head"><b>近7日记录</b><label class="csv-button">导入CSV<input id="healthCsv" type="file" accept=".csv,text/csv"></label></div><div id="healthList" class="health-list"></div></div></div>
+      <p class="disclaimer">Apple HealthKit和Android Health Connect需要原生手机端授权。当前版本支持手动记录和CSV导入，并已为后续手机伴侣应用保留同一数据接口。</p>
+    </section>
   </main>
 </div><div id="toast"></div><script src="/app.js"></script></body></html>
