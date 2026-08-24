@@ -6,6 +6,11 @@ spec = importlib.util.spec_from_file_location("app", Path(__file__).parents[1] /
 app = importlib.util.module_from_spec(spec); spec.loader.exec_module(app)
 
 class CoreTest(unittest.TestCase):
+    def test_holding_keeps_cost_separate_from_value(self):
+        item = app.clean_item({"name": "ETF", "cost": "1000", "market_value": "1120"})
+        self.assertEqual(item["cost"], "1000.00")
+        self.assertEqual(item["market_value"], "1120.00")
+
     def test_rejects_negative_money(self):
         with self.assertRaises(ValueError): app.money("-1")
 

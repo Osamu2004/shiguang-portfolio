@@ -66,7 +66,16 @@ def clean_item(raw):
     if not name:
         raise ValueError("缺少基金名称")
     code = re.sub(r"\D", "", str(raw.get("code", "")))[:6]
-    return {"code": code, "name": name, "market_value": money(raw.get("market_value", 0))}
+    market_value = money(raw.get("market_value", 0))
+    return {"code": code, "name": name, "market_value": market_value,
+            "cost": money(raw.get("cost", market_value))}
+
+
+def save_asset_snapshot(conn, now):
+    fund = Decimal(str(conn.execute("SELECT COALESCE(SUM(market_value + 0),0) FROM holdings").fetchone()[0]))
+    coin = Decimal(str(conn.execute("SELECT COALESCE(SUM(estimated_value + 0),0) FROM coin_collection").fetchone()[0]))
+    conn.execute("INSERT OR REPLACE INTO portfolio_snapshots VALUES(?,?,?,?)",
+                 (datetime.now().date().isoformat(), money(fund + coin), "manual", now))
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -93,8 +102,13 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == "/api/state":
             with db() as conn:
                 rows = [dict(r) for r in conn.execute("SELECT * FROM holdings ORDER BY market_value + 0 DESC")]
+                snapshots = [dict(r) for r in conn.execute("SELECT * FROM portfolio_snapshots ORDER BY day LIMIT 365")]
+                coin_row = conn.execute("SELECT COALESCE(SUM(quantity),0),COALESCE(SUM(estimated_value + 0),0) FROM coin_collection").fetchone()
             total = sum(Decimal(r["market_value"]) for r in rows)
-            self.json_response({"holdings": rows, "total": str(total)})
+            total_cost = sum(Decimal(r["cost"]) for r in rows)
+            self.json_response({"holdings": rows, "total": str(total), "totalCost": str(total_cost),
+                "profit": str(total-total_cost), "snapshots": snapshots,
+                "coins": {"quantity": coin_row[0], "value": str(coin_row[1])}})
             return
         if self.path == "/api/health":
             with db() as conn:
@@ -137,7 +151,8 @@ class Handler(SimpleHTTPRequestHandler):
                 now = datetime.now().isoformat(timespec="seconds")
                 with db() as conn:
                     conn.execute("INSERT INTO holdings(code,name,category,market_value,cost,updated_at) VALUES(?,?,?,?,?,?)",
-                                 (item["code"] or None, item["name"], "宽基指数", item["market_value"], item["market_value"], now))
+                                 (item["code"] or None, item["name"], "宽基指数", item["market_value"], item["cost"], now))
+                    save_asset_snapshot(conn, now)
                 self.json_response({"ok": True})
                 return
             if self.path == "/api/health":
@@ -166,6 +181,7 @@ class Handler(SimpleHTTPRequestHandler):
                 with db() as conn:
                     conn.execute("INSERT OR REPLACE INTO coins VALUES(?,?,?,?,?,?,?,?,?,?)",(coin_id,name,str(raw.get("series",""))[:60],int(raw["issue_year"]) if raw.get("issue_year") else None,money(raw.get("face_value",0)),str(raw.get("material",""))[:40],None,"self","self-owned",now))
                     conn.execute("INSERT OR REPLACE INTO coin_collection VALUES(?,?,?,?,?,?,?,?)",(coin_id,qty,str(raw.get("grade",""))[:30],money(raw.get("purchase_price",0)),money(raw.get("estimated_value",0)),str(raw.get("storage_location",""))[:80],str(raw.get("notes",""))[:500],now))
+                    save_asset_snapshot(conn, now)
                 self.json_response({"ok":True,"id":coin_id}); return
             if self.path == "/api/update/token":
                 from updater import store_token
