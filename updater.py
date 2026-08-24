@@ -12,7 +12,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 REPO = "Osamu2004/shiguang-portfolio"
 SERVICE = "shiguang-updates"
 
