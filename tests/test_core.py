@@ -115,6 +115,20 @@ class CoreTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"100%"):
             app.drawdown_rules({"drawdown_thresholds":"10,20,35,50","drawdown_allocations":"20,20,20,20"})
 
+    def test_inferred_flow_uses_two_snapshots_and_their_public_nav(self):
+        with tempfile.TemporaryDirectory() as folder:
+            data=Path(folder); path=data/"portfolio.db"
+            with mock.patch.object(app,"DATA",data),mock.patch.object(app,"DB",path):
+                with app.db() as conn:
+                    conn.execute("INSERT INTO holding_snapshots VALUES(?,?,?,?,?,?,?,?,?)",("2026-07-01","050025","050025","A","1000","0","0","manual","1"))
+                    conn.execute("INSERT INTO holding_snapshots VALUES(?,?,?,?,?,?,?,?,?)",("2026-08-01","050025","050025","A","1500","0","0","manual","2"))
+                    conn.execute("INSERT INTO fund_market_daily VALUES(?,?,?,?,?,?,?)",("050025","2026-07-01","1.00","1","0","test","1"))
+                    conn.execute("INSERT INTO fund_market_daily VALUES(?,?,?,?,?,?,?)",("050025","2026-08-01","1.20","1.2","0","test","2"))
+                    flow=app.inferred_holding_flow(conn,"050025")
+                self.assertEqual(flow["direction"],"buy")
+                self.assertEqual(flow["net_units"],"250.0000")
+                self.assertEqual(flow["net_amount"],"300.00")
+
     def test_all_three_platform_fields_are_required(self):
         with self.assertRaisesRegex(ValueError, "原样填写"):
             app.clean_item({"name": "ETF", "market_value": "1100", "return_rate": "10%"})

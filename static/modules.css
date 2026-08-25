@@ -110,7 +110,7 @@
 }
 .fund-columns {
   display: grid;
-  grid-template-columns: minmax(210px, 1fr) 156px 130px 125px 145px 190px;
+  grid-template-columns: minmax(210px, 1fr) 156px 130px 125px 145px 80px;
   gap: 16px;
   align-items: center;
   padding: 9px 20px;
@@ -124,7 +124,7 @@
 .fund-columns span:nth-child(n+2) { text-align: right; }
 .fund-columns span:last-child { text-align: center; }
 .fund-row.manage-row {
-  grid-template-columns: minmax(210px, 1fr) 156px 130px 125px 145px 190px !important;
+  grid-template-columns: minmax(210px, 1fr) 156px 130px 125px 145px 80px !important;
   padding: 15px 20px;
 }
 .manage-row .fund-identity { grid-column: 1; grid-row: 1; }
@@ -144,11 +144,16 @@
 .fund-row .share small { display: block; color: inherit; }
 .fund-actions { justify-content: flex-end; gap: 6px; }
 .fund-actions button { padding: 7px 9px; }
+.inferred-flow { display: block !important; margin-top: 7px; font-size: 10px !important; }
+.inferred-flow i { display: block; margin-top: 2px; color: var(--ink-subtle); font-style: normal; font-size: 8px; }
+.flow-buy { color: var(--rust) !important; }
+.flow-sell { color: var(--forest) !important; }
+.manage-kpis.compact { grid-template-columns: repeat(2, 1fr); }
 
 @media (max-width: 1120px) {
   .fund-columns { display: none; }
   #holdingList2 { overflow-x: auto; }
-  .fund-row.manage-row { min-width: 1010px; }
+  .fund-row.manage-row { min-width: 900px; }
 }
 
 @media (max-width: 850px) {

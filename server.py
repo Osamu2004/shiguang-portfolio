@@ -346,6 +346,31 @@ def save_asset_snapshot(conn, now):
                  (datetime.now().date().isoformat(), money(fund + account), "manual", now))
 
 
+def inferred_holding_flow(conn, holding_key):
+    snapshots=[dict(row) for row in conn.execute(
+      "SELECT day,market_value FROM holding_snapshots WHERE holding_key=? ORDER BY day DESC LIMIT 2",(holding_key,))]
+    if len(snapshots)<2 or holding_key.startswith("name:"): return None
+    current,previous=snapshots[0],snapshots[1]
+    navs=[]
+    for snapshot in (previous,current):
+        nav=conn.execute("""SELECT day,unit_nav FROM fund_market_daily
+          WHERE code=? AND day<=? ORDER BY day DESC LIMIT 1""",(holding_key,snapshot["day"])).fetchone()
+        if not nav: return {"status":"missing_market","from_day":previous["day"],"to_day":current["day"]}
+        try: nav_value=Decimal(nav["unit_nav"])
+        except InvalidOperation: return {"status":"missing_market","from_day":previous["day"],"to_day":current["day"]}
+        if nav_value<=0: return {"status":"missing_market","from_day":previous["day"],"to_day":current["day"]}
+        navs.append((nav["day"],nav_value))
+    previous_units=Decimal(previous["market_value"])/navs[0][1]
+    current_units=Decimal(current["market_value"])/navs[1][1]
+    net_units=current_units-previous_units
+    estimated_amount=net_units*navs[1][1]
+    return {"status":"estimated","from_day":previous["day"],"to_day":current["day"],
+      "previous_nav_day":navs[0][0],"current_nav_day":navs[1][0],
+      "net_units":str(net_units.quantize(Decimal("0.0001"))),
+      "net_amount":str(abs(estimated_amount).quantize(Decimal("0.01"))),
+      "direction":"buy" if net_units>0 else "sell" if net_units<0 else "none"}
+
+
 class Handler(SimpleHTTPRequestHandler):
     def extension_origin(self):
         origin = self.headers.get("Origin", "")
@@ -423,6 +448,7 @@ class Handler(SimpleHTTPRequestHandler):
                     row["investment_strategy"]=dict(strategy) if strategy else {"mode":"none","daily_amount":"0","per_drop_pct_amount":"0","max_daily_amount":"0","drawdown_budget":"0","executed_drawdown_stage":0,"drawdown_thresholds":"10,20,35,50","drawdown_allocations":"20,20,30,30"}
                     row["drawdown_status"]=drawdown_status(row["investment_strategy"],market_data,history)
                     row["planned_investment"]=str(planned_investment(row["investment_strategy"],market_data,history).quantize(Decimal("0.01")))
+                    row["inferred_flow"]=inferred_holding_flow(conn,row.get("code") or "name:"+row["name"])
             total = sum(Decimal(r["market_value"]) for r in rows)
             account_total = sum(Decimal(r["balance"]) for r in accounts)
             total_cost = sum(Decimal(r["cost"]) for r in rows)
