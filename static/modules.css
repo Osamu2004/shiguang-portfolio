@@ -66,6 +66,7 @@
   border: 1px solid var(--rule-soft);
   background: var(--paper-soft);
 }
+[data-strategy][hidden] { display: none !important; }
 .drawdown-rules > b { grid-column: 1 / -1; font-size: 12px; }
 .drawdown-rules > span { color: var(--ink-subtle); font-size: 10px; text-align: center; }
 .drawdown-rules > span:first-of-type { grid-column: 2; }
