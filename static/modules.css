@@ -4,25 +4,35 @@
   display: grid;
   gap: 10px;
 }
-body,
-button,
-label,
-a,
-span,
-small,
-strong,
-b,
-p,
-h1,
-h2,
-h3,
-h4,
-td,
-th,
-svg text,
-.ngc-row {
+#accountList,
+#holdingList,
+#holdingList2,
+#healthList,
+#coinCatalog,
+#chinaCoinCatalog,
+#gcaList,
+#scholarPapers,
+#auditList,
+.personal-kpis,
+.health-kpis,
+.scholar-profile,
+.trend-chart,
+.fund-sparkline,
+.ngc-row,
+input,
+textarea {
   user-select: text;
   -webkit-user-select: text;
+}
+header,
+aside nav,
+.user-menu,
+.fund-period-toolbar,
+.fund-columns,
+button,
+form label {
+  user-select: none;
+  -webkit-user-select: none;
 }
 .module-switches > b { font-size: 13px; }
 .module-switches > small { color: var(--muted); font-size: 11px; }
