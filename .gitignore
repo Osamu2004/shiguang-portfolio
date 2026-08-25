@@ -8,3 +8,7 @@ data/sync-config.json
 build/
 dist/
 *.spec
+ios/**/DerivedData/
+ios/**/*.xcworkspace/
+ios/**/*.xcodeproj/
+ios/**/xcuserdata/

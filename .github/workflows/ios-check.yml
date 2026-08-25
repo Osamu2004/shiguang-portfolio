@@ -1,0 +1,19 @@
+name: iOS companion check
+on:
+  push:
+    paths: ["ios/ShiguangHealth/**", ".github/workflows/ios-check.yml"]
+  pull_request:
+    paths: ["ios/ShiguangHealth/**"]
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate Xcode project
+        working-directory: ios/ShiguangHealth
+        run: xcodegen generate
+      - name: Compile for iPhone Simulator
+        working-directory: ios/ShiguangHealth
+        run: xcodebuild -project ShiguangHealth.xcodeproj -scheme ShiguangHealth -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
