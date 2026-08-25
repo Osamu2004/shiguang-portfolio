@@ -35,6 +35,12 @@ class SyncTest(unittest.TestCase):
         merged = sync.merge_vaults(new, old)
         self.assertEqual(merged["tables"]["holdings"][0]["market_value"], "20")
 
+    def test_newer_archive_state_wins_during_merge(self):
+        active = {"updatedAt":"1","tables":{"holdings":[{"code":"050025","name":"A","market_value":"10","updated_at":"2026-01-01","archived_at":None}]}}
+        archived = {"updatedAt":"2","tables":{"holdings":[{"code":"050025","name":"A","market_value":"10","updated_at":"2026-02-01","archived_at":"2026-02-01"}]}}
+        merged = sync.merge_vaults(active, archived)
+        self.assertEqual(merged["tables"]["holdings"][0]["archived_at"], "2026-02-01")
+
     def test_coin_metadata_is_merged(self):
         local={"updatedAt":"2","tables":{"coins":[{"id":"coin-1","name":"A","updated_at":"2"}]}}
         merged=sync.merge_vaults(local,{"updatedAt":"1","tables":{}})

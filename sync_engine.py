@@ -115,12 +115,12 @@ def import_data(db_path, payload):
             existing = conn.execute("SELECT id FROM holdings WHERE code=? OR name=? LIMIT 1",
                                     (row.get("code"), row["name"])).fetchone()
             values = (row.get("code"), row["name"], row.get("category", "未分类"),
-                      row["market_value"], row.get("cost", "0"), row["updated_at"])
+                      row["market_value"], row.get("cost", "0"), row["updated_at"], row.get("archived_at"))
             if existing:
-                conn.execute("UPDATE holdings SET code=?,name=?,category=?,market_value=?,cost=?,updated_at=? WHERE id=?",
+                conn.execute("UPDATE holdings SET code=?,name=?,category=?,market_value=?,cost=?,updated_at=?,archived_at=? WHERE id=?",
                              values + (existing[0],))
             else:
-                conn.execute("INSERT INTO holdings(code,name,category,market_value,cost,updated_at) VALUES(?,?,?,?,?,?)", values)
+                conn.execute("INSERT INTO holdings(code,name,category,market_value,cost,updated_at,archived_at) VALUES(?,?,?,?,?,?,?)", values)
         for row in payload["tables"].get("holding_snapshots", []):
             conn.execute("INSERT OR REPLACE INTO holding_snapshots VALUES(?,?,?,?,?,?,?,?,?)", tuple(row.get(k) for k in
               ("day","holding_key","code","name","market_value","holding_profit","return_rate","source","created_at")))

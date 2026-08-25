@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -8,6 +9,18 @@ spec = importlib.util.spec_from_file_location("app", Path(__file__).parents[1] /
 app = importlib.util.module_from_spec(spec); spec.loader.exec_module(app)
 
 class CoreTest(unittest.TestCase):
+    def test_database_adds_archive_column_without_losing_holdings(self):
+        with tempfile.TemporaryDirectory() as folder:
+            data = Path(folder)
+            with mock.patch.object(app, "DATA", data), mock.patch.object(app, "DB", data / "portfolio.db"):
+                with app.db() as conn:
+                    columns = {row[1] for row in conn.execute("PRAGMA table_info(holdings)")}
+                    conn.execute("INSERT INTO holdings(code,name,category,market_value,cost,updated_at) VALUES(?,?,?,?,?,?)",
+                                 ("050025", "测试基金", "海外基金", "100", "90", "2026-08-25T10:00:00"))
+                with app.db() as conn:
+                    self.assertIn("archived_at", columns)
+                    self.assertEqual(conn.execute("SELECT name FROM holdings WHERE code='050025'").fetchone()[0], "测试基金")
+
     def test_holding_keeps_cost_separate_from_value(self):
         item = app.clean_item({"name": "ETF", "category": "债券基金", "cost": "1000", "market_value": "1120"})
         self.assertEqual(item["cost"], "1000.00")

@@ -41,6 +41,9 @@ def db():
       cost TEXT NOT NULL DEFAULT '0', updated_at TEXT NOT NULL,
       UNIQUE(code), UNIQUE(name)
     )""")
+    holding_columns = {row[1] for row in conn.execute("PRAGMA table_info(holdings)")}
+    if "archived_at" not in holding_columns:
+        conn.execute("ALTER TABLE holdings ADD COLUMN archived_at TEXT")
     conn.execute("""CREATE TABLE IF NOT EXISTS accounts (
       id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE,
       account_type TEXT NOT NULL, platform TEXT NOT NULL, balance TEXT NOT NULL,
@@ -196,7 +199,7 @@ def clean_account(raw):
 
 
 def save_asset_snapshot(conn, now):
-    fund = Decimal(str(conn.execute("SELECT COALESCE(SUM(market_value + 0),0) FROM holdings").fetchone()[0]))
+    fund = Decimal(str(conn.execute("SELECT COALESCE(SUM(market_value + 0),0) FROM holdings WHERE archived_at IS NULL").fetchone()[0]))
     account = Decimal(str(conn.execute("SELECT COALESCE(SUM(balance + 0),0) FROM accounts").fetchone()[0]))
     conn.execute("INSERT OR REPLACE INTO portfolio_snapshots VALUES(?,?,?,?)",
                  (datetime.now().date().isoformat(), money(fund + account), "manual", now))
@@ -238,14 +241,15 @@ class Handler(SimpleHTTPRequestHandler):
             self.json_response({"history": rows}); return
         if self.path == "/api/state":
             with db() as conn:
-                rows = [dict(r) for r in conn.execute("SELECT * FROM holdings ORDER BY market_value + 0 DESC")]
+                rows = [dict(r) for r in conn.execute("SELECT * FROM holdings WHERE archived_at IS NULL ORDER BY market_value + 0 DESC")]
+                archived = [dict(r) for r in conn.execute("SELECT * FROM holdings WHERE archived_at IS NOT NULL ORDER BY archived_at DESC")]
                 accounts = [dict(r) for r in conn.execute("SELECT * FROM accounts ORDER BY balance + 0 DESC")]
                 snapshots = [dict(r) for r in conn.execute("SELECT * FROM portfolio_snapshots ORDER BY day LIMIT 365")]
                 coin_row = conn.execute("SELECT COALESCE(SUM(quantity),0),COALESCE(SUM(estimated_value + 0),0) FROM coin_collection").fetchone()
             total = sum(Decimal(r["market_value"]) for r in rows)
             account_total = sum(Decimal(r["balance"]) for r in accounts)
             total_cost = sum(Decimal(r["cost"]) for r in rows)
-            self.json_response({"holdings": rows, "accounts": accounts, "total": str(total + account_total),
+            self.json_response({"holdings": rows, "archivedHoldings": archived, "accounts": accounts, "total": str(total + account_total),
                 "fundTotal": str(total), "accountTotal": str(account_total), "totalCost": str(total_cost),
                 "profit": str(total-total_cost), "snapshots": snapshots,
                 "coins": {"quantity": coin_row[0], "value": str(coin_row[1])}})
@@ -300,7 +304,7 @@ class Handler(SimpleHTTPRequestHandler):
                                             (item["code"], item["name"])).fetchone()
                     values = (item["code"] or None, item["name"], item["category"], item["market_value"], item["cost"], now)
                     if existing:
-                        conn.execute("UPDATE holdings SET code=?,name=?,category=?,market_value=?,cost=?,updated_at=? WHERE id=?",
+                        conn.execute("UPDATE holdings SET code=?,name=?,category=?,market_value=?,cost=?,updated_at=?,archived_at=NULL WHERE id=?",
                                      values + (existing[0],))
                     else:
                         conn.execute("INSERT INTO holdings(code,name,category,market_value,cost,updated_at) VALUES(?,?,?,?,?,?)", values)
@@ -311,6 +315,19 @@ class Handler(SimpleHTTPRequestHandler):
                     save_asset_snapshot(conn, now)
                 self.json_response({"ok": True, "mode": "updated" if existing else "created"})
                 return
+            if self.path in ("/api/holdings/archive", "/api/holdings/restore"):
+                code = re.sub(r"\D", "", str(self.read_json().get("code", "")))[:6]
+                if len(code) != 6: raise ValueError("基金代码不正确")
+                now = datetime.now().isoformat(timespec="seconds")
+                with db() as conn:
+                    if self.path.endswith("archive"):
+                        changed = conn.execute("UPDATE holdings SET archived_at=?,updated_at=? WHERE code=? AND archived_at IS NULL",
+                                               (now, now, code)).rowcount
+                    else:
+                        changed = conn.execute("UPDATE holdings SET archived_at=NULL,updated_at=? WHERE code=? AND archived_at IS NOT NULL", (now, code)).rowcount
+                    save_asset_snapshot(conn, now)
+                if not changed: raise ValueError("未找到可操作的持仓")
+                self.json_response({"ok": True}); return
             if self.path == "/api/accounts":
                 item = clean_account(self.read_json())
                 now = datetime.now().isoformat(timespec="seconds")
