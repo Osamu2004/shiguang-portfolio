@@ -1,0 +1,2 @@
+.coin-placeholder{width:108px;height:108px;border:1px solid var(--rule);border-radius:50%;display:grid;place-content:center;text-align:center;background:var(--paper-soft);font:28px Georgia;color:var(--brass-deep)}
+.coin-placeholder small{display:block;margin-top:5px;font-size:8px;color:var(--ink-subtle)}
