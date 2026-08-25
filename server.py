@@ -89,6 +89,10 @@ def db():
       code TEXT PRIMARY KEY,mode TEXT NOT NULL DEFAULT 'none',daily_amount TEXT NOT NULL DEFAULT '0',
       per_drop_pct_amount TEXT NOT NULL DEFAULT '0',max_daily_amount TEXT NOT NULL DEFAULT '0',
       updated_at TEXT NOT NULL)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS user_preferences (
+      id INTEGER PRIMARY KEY CHECK(id=1),show_health INTEGER NOT NULL DEFAULT 1,
+      show_coins INTEGER NOT NULL DEFAULT 1,show_research INTEGER NOT NULL DEFAULT 1,
+      updated_at TEXT NOT NULL)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS coins (id TEXT PRIMARY KEY,name TEXT NOT NULL,series TEXT,
       issue_year INTEGER,face_value TEXT NOT NULL DEFAULT '0',material TEXT,image_path TEXT,
       image_source TEXT,image_license TEXT,updated_at TEXT NOT NULL)""")
@@ -339,6 +343,9 @@ class Handler(SimpleHTTPRequestHandler):
             except ValueError as exc:
                 self.json_response({"error": str(exc)}, 404)
             return
+        if self.path == "/api/preferences":
+            with db() as conn: row=conn.execute("SELECT * FROM user_preferences WHERE id=1").fetchone()
+            self.json_response(dict(row) if row else {"show_health":1,"show_coins":1,"show_research":1}); return
         if self.path.startswith("/api/holdings/history?"):
             code = re.sub(r"\D", "", urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("code", [""])[0])[:6]
             with db() as conn:
@@ -398,6 +405,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "holdingSnapshots": [dict(r) for r in conn.execute("SELECT * FROM holding_snapshots ORDER BY day,holding_key")],
                     "fundMarketDaily": [dict(r) for r in conn.execute("SELECT * FROM fund_market_daily ORDER BY day,code")],
                     "fundStrategies": [dict(r) for r in conn.execute("SELECT * FROM fund_strategies ORDER BY code")],
+                    "userPreferences": [dict(r) for r in conn.execute("SELECT * FROM user_preferences ORDER BY id")],
                     "healthDaily": [dict(r) for r in conn.execute("SELECT * FROM health_daily ORDER BY day")],
                     "portfolioSnapshots": [dict(r) for r in conn.execute("SELECT * FROM portfolio_snapshots ORDER BY day")],
                     "auditLogs": [dict(r) for r in conn.execute("SELECT * FROM audit_logs ORDER BY created_at")],
@@ -524,6 +532,11 @@ class Handler(SimpleHTTPRequestHandler):
                     if not conn.execute("SELECT 1 FROM holdings WHERE code=?",(code,)).fetchone(): raise ValueError("未找到该基金")
                     conn.execute("INSERT OR REPLACE INTO fund_strategies VALUES(?,?,?,?,?,?)",(code,mode,daily,per_pct,cap,now))
                     audit(conn,"FUND_STRATEGY_SAVED","保存基金定投策略："+code,{"mode":mode},now)
+                self.json_response({"ok":True}); return
+            if self.path == "/api/preferences":
+                raw=self.read_json(); now=datetime.now().isoformat(timespec="seconds")
+                values=tuple(1 if raw.get(key,True) else 0 for key in ("show_health","show_coins","show_research"))
+                with db() as conn: conn.execute("INSERT OR REPLACE INTO user_preferences VALUES(1,?,?,?,?)",values+(now,))
                 self.json_response({"ok":True}); return
             if self.path in ("/api/holdings/archive", "/api/holdings/restore"):
                 code = re.sub(r"\D", "", str(self.read_json().get("code", "")))[:6]
