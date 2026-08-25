@@ -7,9 +7,14 @@ app = importlib.util.module_from_spec(spec); spec.loader.exec_module(app)
 
 class CoreTest(unittest.TestCase):
     def test_holding_keeps_cost_separate_from_value(self):
-        item = app.clean_item({"name": "ETF", "cost": "1000", "market_value": "1120"})
+        item = app.clean_item({"name": "ETF", "category": "债券基金", "cost": "1000", "market_value": "1120"})
         self.assertEqual(item["cost"], "1000.00")
         self.assertEqual(item["market_value"], "1120.00")
+        self.assertEqual(item["category"], "债券基金")
+
+    def test_holding_rejects_unknown_category(self):
+        with self.assertRaisesRegex(ValueError, "基金类别"):
+            app.clean_item({"name": "ETF", "category": "未知", "market_value": "100"})
 
     def test_rejects_negative_money(self):
         with self.assertRaises(ValueError): app.money("-1")

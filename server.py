@@ -66,8 +66,12 @@ def clean_item(raw):
     if not name:
         raise ValueError("缺少基金名称")
     code = re.sub(r"\D", "", str(raw.get("code", "")))[:6]
+    allowed_categories = {"宽基指数", "行业主题", "债券基金", "货币基金", "黄金商品", "海外基金"}
+    category = str(raw.get("category", "宽基指数")).strip()
+    if category not in allowed_categories:
+        raise ValueError("基金类别不正确")
     market_value = money(raw.get("market_value", 0))
-    return {"code": code, "name": name, "market_value": market_value,
+    return {"code": code, "name": name, "category": category, "market_value": market_value,
             "cost": money(raw.get("cost", market_value))}
 
 
@@ -154,7 +158,7 @@ class Handler(SimpleHTTPRequestHandler):
                 now = datetime.now().isoformat(timespec="seconds")
                 with db() as conn:
                     conn.execute("INSERT INTO holdings(code,name,category,market_value,cost,updated_at) VALUES(?,?,?,?,?,?)",
-                                 (item["code"] or None, item["name"], "宽基指数", item["market_value"], item["cost"], now))
+                                 (item["code"] or None, item["name"], item["category"], item["market_value"], item["cost"], now))
                     save_asset_snapshot(conn, now)
                 self.json_response({"ok": True})
                 return
