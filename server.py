@@ -91,6 +91,7 @@ def db():
       coin_name TEXT NOT NULL, issue_year INTEGER, grade TEXT NOT NULL, label_type TEXT,
       purchase_price TEXT NOT NULL DEFAULT '0', estimated_value TEXT NOT NULL DEFAULT '0',
       storage_location TEXT, notes TEXT, updated_at TEXT NOT NULL)""")
+    conn.execute("UPDATE graded_coins SET grading_company='NGC' WHERE grading_company='GCA'")
     conn.execute("""CREATE TABLE IF NOT EXISTS scholar_profiles (
       profile_id TEXT PRIMARY KEY,name TEXT NOT NULL,affiliation TEXT,interests TEXT,profile_url TEXT,updated_at TEXT NOT NULL)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS scholar_snapshots (
@@ -367,6 +368,10 @@ class Handler(SimpleHTTPRequestHandler):
             self.json_response(catalog); return
         if self.path == "/api/graded-coins":
             with db() as conn: rows = [dict(r) for r in conn.execute("SELECT * FROM graded_coins ORDER BY issue_year DESC,updated_at DESC")]
+            for row in rows:
+                score="".join(ch for ch in row["grade"] if ch.isdigit())
+                row["verify_url"]="https://www.ngccoin.com/certlookup/%s/%s/" % (
+                    urllib.parse.quote(row["certificate_no"]), urllib.parse.quote(score or row["grade"]))
             self.json_response({"coins": rows}); return
         if self.path == "/api/scholar":
             with db() as conn:
@@ -539,11 +544,14 @@ class Handler(SimpleHTTPRequestHandler):
             if self.path == "/api/graded-coins":
                 raw=self.read_json(); cert=str(raw.get("certificate_no", "")).strip()[:80]
                 name=str(raw.get("coin_name", "")).strip()[:120]; grade=str(raw.get("grade", "")).strip()[:30]
-                if not cert or not name or not grade: raise ValueError("请填写证书编号、币种名称和评级")
-                item_id=hashlib.sha256(("GCA:"+cert).encode()).hexdigest()[:20]; now=datetime.now().isoformat(timespec="seconds")
+                digits="".join(ch for ch in cert if ch.isdigit())
+                if len(digits)==10: cert=digits[:7]+"-"+digits[7:]
+                if not cert or not grade: raise ValueError("请填写 NGC 证书编号和评级")
+                if not name: name="NGC 证书 "+cert
+                item_id=hashlib.sha256(("NGC:"+cert).encode()).hexdigest()[:20]; now=datetime.now().isoformat(timespec="seconds")
                 with db() as conn:
                     conn.execute("INSERT OR REPLACE INTO graded_coins VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                      (item_id,"GCA",cert,name,int(raw["issue_year"]) if raw.get("issue_year") else None,grade,
+                      (item_id,"NGC",cert,name,int(raw["issue_year"]) if raw.get("issue_year") else None,grade.upper(),
                        str(raw.get("label_type", ""))[:40],money(raw.get("purchase_price",0)),money(raw.get("estimated_value",0)),
                        str(raw.get("storage_location", ""))[:80],str(raw.get("notes", ""))[:500],now))
                 self.json_response({"ok":True,"id":item_id}); return
