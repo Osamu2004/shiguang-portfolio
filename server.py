@@ -31,6 +31,14 @@ DATA = Path(os.getenv("SHIGUANG_DATA_DIR", str(Path(__file__).resolve().parent /
 DB = DATA / "portfolio.db"
 SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 FUND_CATALOG = DATA / "fund-catalog.json"
+MARKET_INDICES = (
+    ("000001", "上证指数", "A股", "1.000001"),
+    ("000300", "沪深300", "A股", "1.000300"),
+    ("399006", "创业板指", "A股", "0.399006"),
+    ("HSI", "恒生指数", "港股", "100.HSI"),
+    ("NDX", "纳斯达克100", "美股", "100.NDX"),
+    ("SPX", "标普500", "美股", "100.SPX"),
+)
 
 
 def euro2_catalog():
@@ -85,6 +93,9 @@ def db():
       code TEXT NOT NULL,day TEXT NOT NULL,unit_nav TEXT NOT NULL,cumulative_nav TEXT,
       daily_change_pct TEXT NOT NULL,source TEXT NOT NULL,fetched_at TEXT NOT NULL,
       PRIMARY KEY(code,day))""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS market_index_daily (
+      code TEXT NOT NULL,day TEXT NOT NULL,close TEXT NOT NULL,daily_change_pct TEXT NOT NULL,
+      source TEXT NOT NULL,fetched_at TEXT NOT NULL,PRIMARY KEY(code,day))""")
     conn.execute("""CREATE TABLE IF NOT EXISTS fund_strategies (
       code TEXT PRIMARY KEY,mode TEXT NOT NULL DEFAULT 'none',daily_amount TEXT NOT NULL DEFAULT '0',
       per_drop_pct_amount TEXT NOT NULL DEFAULT '0',max_daily_amount TEXT NOT NULL DEFAULT '0',
@@ -279,6 +290,30 @@ def fetch_fund_market(code, page_size=1200):
     return rows
 
 
+def fetch_market_index(code, secid, page_size=1200):
+    query = urllib.parse.urlencode({"secid": secid, "klt": 101, "fqt": 1,
+      "lmt": page_size, "end": "20500101", "fields1": "f1,f2,f3,f4,f5,f6",
+      "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61"})
+    request = urllib.request.Request("https://push2his.eastmoney.com/api/qt/stock/kline/get?" + query,
+      headers={"Accept": "application/json", "Referer": "https://quote.eastmoney.com/",
+               "User-Agent": "shiguang-desktop"})
+    try:
+        with urllib.request.urlopen(request, timeout=15, context=SSL_CONTEXT) as response:
+            payload = json.loads(response.read())
+    except (urllib.error.URLError, OSError, TimeoutError, json.JSONDecodeError):
+        raise ValueError("公开指数行情连接失败，请稍后重试")
+    rows = []
+    for line in (payload.get("data") or {}).get("klines") or []:
+        fields = str(line).split(",")
+        if len(fields) < 9 or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", fields[0]): continue
+        try: Decimal(fields[2]); Decimal(fields[8])
+        except InvalidOperation: continue
+        rows.append({"code": code, "day": fields[0], "close": fields[2],
+          "daily_change_pct": fields[8], "source": "eastmoney-public-index"})
+    if not rows: raise ValueError("暂未获取到该指数的公开行情")
+    return rows
+
+
 def drawdown_rules(strategy):
     def parse(name, default):
         raw=str((strategy or {}).get(name,default))
@@ -431,6 +466,15 @@ class Handler(SimpleHTTPRequestHandler):
             with db() as conn: rows=[dict(r) for r in conn.execute(
               "SELECT * FROM fund_market_daily WHERE code=? ORDER BY day DESC LIMIT 365",(code,))]
             self.json_response({"history":rows}); return
+        if self.path == "/api/market":
+            indices=[]; updated_at=""
+            with db() as conn:
+                for code,name,market,_ in MARKET_INDICES:
+                    history=[dict(r) for r in conn.execute(
+                      "SELECT day,close,daily_change_pct,source,fetched_at FROM market_index_daily WHERE code=? ORDER BY day",(code,))]
+                    if history: updated_at=max(updated_at,history[-1]["fetched_at"])
+                    indices.append({"code":code,"name":name,"market":market,"latest":history[-1] if history else None,"history":history})
+            self.json_response({"indices":indices,"updatedAt":updated_at,"source":"东方财富公开指数行情"}); return
         if self.path == "/api/state":
             with db() as conn:
                 rows = [dict(r) for r in conn.execute("SELECT * FROM holdings WHERE archived_at IS NULL ORDER BY market_value + 0 DESC")]
@@ -480,6 +524,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "holdings": [dict(r) for r in conn.execute("SELECT * FROM holdings ORDER BY id")],
                     "holdingSnapshots": [dict(r) for r in conn.execute("SELECT * FROM holding_snapshots ORDER BY day,holding_key")],
                     "fundMarketDaily": [dict(r) for r in conn.execute("SELECT * FROM fund_market_daily ORDER BY day,code")],
+                    "marketIndexDaily": [dict(r) for r in conn.execute("SELECT * FROM market_index_daily ORDER BY day,code")],
                     "fundStrategies": [dict(r) for r in conn.execute("SELECT * FROM fund_strategies ORDER BY code")],
                     "userPreferences": [dict(r) for r in conn.execute("SELECT * FROM user_preferences ORDER BY id")],
                     "healthDaily": [dict(r) for r in conn.execute("SELECT * FROM health_daily ORDER BY day")],
@@ -594,6 +639,20 @@ class Handler(SimpleHTTPRequestHandler):
                                   (row["code"],row["day"],row["unit_nav"],row["cumulative_nav"],row["daily_change_pct"],row["source"],now))
                             updated+=1
                         except Exception as exc: errors[code]=str(exc) if isinstance(exc,ValueError) else "公开行情读取失败"
+                self.json_response({"ok":True,"updated":updated,"errors":errors}); return
+            if self.path == "/api/market/refresh":
+                now=datetime.now().isoformat(timespec="seconds"); updated=0; errors={}
+                with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+                    futures={pool.submit(fetch_market_index,code,secid):code for code,_,_,secid in MARKET_INDICES}
+                    for future in concurrent.futures.as_completed(futures):
+                        code=futures[future]
+                        try:
+                            rows=future.result()
+                            with db() as conn:
+                                for row in rows: conn.execute("INSERT OR REPLACE INTO market_index_daily VALUES(?,?,?,?,?,?)",
+                                  (row["code"],row["day"],row["close"],row["daily_change_pct"],row["source"],now))
+                            updated+=1
+                        except Exception as exc: errors[code]=str(exc) if isinstance(exc,ValueError) else "公开指数行情读取失败"
                 self.json_response({"ok":True,"updated":updated,"errors":errors}); return
             if self.path == "/api/funds/strategy":
                 raw=self.read_json(); code=re.sub(r"\D", "", str(raw.get("code", "")))[:6]

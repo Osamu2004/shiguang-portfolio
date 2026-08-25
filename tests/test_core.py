@@ -85,6 +85,16 @@ class CoreTest(unittest.TestCase):
         self.assertEqual(rows[0]["daily_change_pct"], "-1.27")
         self.assertEqual(rows[0]["unit_nav"], "1.2345")
 
+    def test_public_market_index_parses_close_and_daily_change(self):
+        response = mock.MagicMock()
+        payload = {"data": {"klines": ["2026-08-25,4542.24,4552.03,4573.38,4523.02,171510168,480421573871.90,1.10,-0.24,-11.10,0.51"]}}
+        response.__enter__.return_value.read.return_value = json.dumps(payload).encode()
+        with mock.patch.object(app.urllib.request, "urlopen", return_value=response):
+            rows = app.fetch_market_index("000300", "1.000300")
+        self.assertEqual(rows[0]["day"], "2026-08-25")
+        self.assertEqual(rows[0]["close"], "4552.03")
+        self.assertEqual(rows[0]["daily_change_pct"], "-0.24")
+
     def test_fund_investment_strategy_defaults_to_no_money(self):
         self.assertEqual(app.planned_investment(None, {"daily_change_pct":"-3"}), 0)
 

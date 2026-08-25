@@ -68,6 +68,15 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(len(merged["tables"]["fund_market_daily"]),1)
         self.assertEqual(merged["tables"]["fund_market_daily"][0]["unit_nav"],"1.2")
 
+    def test_public_index_market_is_merged_by_code_and_day(self):
+        local={"updatedAt":"2","tables":{"market_index_daily":[
+          {"code":"000300","day":"2026-08-25","close":"4552.03","daily_change_pct":"-0.24","fetched_at":"2"}]}}
+        remote={"updatedAt":"1","tables":{"market_index_daily":[
+          {"code":"000300","day":"2026-08-25","close":"4500","daily_change_pct":"-1","fetched_at":"1"}]}}
+        merged=sync.merge_vaults(local,remote)
+        self.assertEqual(len(merged["tables"]["market_index_daily"]),1)
+        self.assertEqual(merged["tables"]["market_index_daily"][0]["close"],"4552.03")
+
     def test_fund_strategy_is_merged_by_code(self):
         local={"updatedAt":"2","tables":{"fund_strategies":[{"code":"050025","mode":"daily","daily_amount":"10","updated_at":"2"}]}}
         merged=sync.merge_vaults(local,{"updatedAt":"1","tables":{}})
