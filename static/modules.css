@@ -148,6 +148,7 @@
 .inferred-flow i { display: block; margin-top: 2px; color: var(--ink-subtle); font-style: normal; font-size: 8px; }
 .flow-buy { color: var(--rust) !important; }
 .flow-sell { color: var(--forest) !important; }
+.trend-y-label { fill: var(--ink-subtle); font: 9px ui-monospace, monospace; }
 .manage-kpis.compact { grid-template-columns: repeat(2, 1fr); }
 
 @media (max-width: 1120px) {
