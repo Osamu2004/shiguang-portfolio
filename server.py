@@ -11,15 +11,22 @@ import threading
 import time
 import csv
 import io
+import ssl
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import certifi
+
 ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 STATIC = ROOT / "static"
 DATA = Path(os.getenv("SHIGUANG_DATA_DIR", str(Path(__file__).resolve().parent / "data")))
 DB = DATA / "portfolio.db"
+SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
 
 def db():
@@ -66,6 +73,16 @@ def money(value):
         raise ValueError("金额格式不正确")
 
 
+def signed_money(value):
+    try:
+        result = Decimal(str(value).replace(",", "").replace("¥", "").strip())
+        if abs(result) > Decimal("100000000000"):
+            raise ValueError()
+        return result.quantize(Decimal("0.01"))
+    except (InvalidOperation, ValueError):
+        raise ValueError("持有收益格式不正确")
+
+
 def clean_item(raw):
     name = str(raw.get("name", "")).strip()[:80]
     if not name:
@@ -76,8 +93,38 @@ def clean_item(raw):
     if category not in allowed_categories:
         raise ValueError("基金类别不正确")
     market_value = money(raw.get("market_value", 0))
+    if raw.get("holding_profit") not in (None, ""):
+        cost_value = Decimal(market_value) - signed_money(raw["holding_profit"])
+        if cost_value < 0:
+            raise ValueError("持有收益不能大于当前金额")
+        cost = money(cost_value)
+    else:
+        cost = money(raw.get("cost", market_value))
     return {"code": code, "name": name, "category": category, "market_value": market_value,
-            "cost": money(raw.get("cost", market_value))}
+            "cost": cost}
+
+
+def lookup_fund(code):
+    code = re.sub(r"\D", "", str(code))[:6]
+    if len(code) != 6:
+        raise ValueError("请输入 6 位基金代码")
+    query = urllib.parse.urlencode({"FCODE": code, "deviceid": "Wap", "plat": "Wap",
+                                    "product": "EFund", "version": "2.0.0"})
+    request = urllib.request.Request("https://fundmobapi.eastmoney.com/FundMNewApi/FundMNDetailInformation?" + query,
+      headers={"Accept": "application/json", "Referer": "https://fund.eastmoney.com/",
+               "User-Agent": "shiguang-desktop"})
+    try:
+        with urllib.request.urlopen(request, timeout=10, context=SSL_CONTEXT) as response:
+            payload = json.loads(response.read())
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+        raise ValueError("基金信息查询失败，请稍后重试")
+    data = payload.get("Datas") or {}
+    if not data.get("SHORTNAME"):
+        raise ValueError("未找到该基金代码")
+    fund_type = str(data.get("FTYPE", ""))
+    category = "海外基金" if "海外" in fund_type else "债券基金" if "债" in fund_type else "货币基金" if "货币" in fund_type else "宽基指数"
+    return {"code": code, "name": data["SHORTNAME"], "fullName": data.get("FULLNAME", ""),
+            "fundType": fund_type, "category": category}
 
 
 def clean_account(raw):
@@ -121,6 +168,13 @@ class Handler(SimpleHTTPRequestHandler):
         return json.loads(self.rfile.read(size) or b"{}")
 
     def do_GET(self):
+        if self.path.startswith("/api/funds/lookup?"):
+            code = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("code", [""])[0]
+            try:
+                self.json_response(lookup_fund(code))
+            except ValueError as exc:
+                self.json_response({"error": str(exc)}, 404)
+            return
         if self.path == "/api/state":
             with db() as conn:
                 rows = [dict(r) for r in conn.execute("SELECT * FROM holdings ORDER BY market_value + 0 DESC")]

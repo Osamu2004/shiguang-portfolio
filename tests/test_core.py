@@ -1,6 +1,8 @@
 import importlib.util
+import json
 import unittest
 from pathlib import Path
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location("app", Path(__file__).parents[1] / "server.py")
 app = importlib.util.module_from_spec(spec); spec.loader.exec_module(app)
@@ -15,6 +17,24 @@ class CoreTest(unittest.TestCase):
     def test_holding_rejects_unknown_category(self):
         with self.assertRaisesRegex(ValueError, "基金类别"):
             app.clean_item({"name": "ETF", "category": "未知", "market_value": "100"})
+
+    def test_holding_cost_is_derived_from_alipay_profit(self):
+        item = app.clean_item({"name": "ETF", "market_value": "1120", "holding_profit": "120"})
+        self.assertEqual(item["cost"], "1000.00")
+
+    def test_negative_holding_profit_is_supported(self):
+        item = app.clean_item({"name": "ETF", "market_value": "920", "holding_profit": "-80"})
+        self.assertEqual(item["cost"], "1000.00")
+
+    def test_fund_code_lookup_returns_chinese_name(self):
+        response = mock.MagicMock()
+        payload = {"Datas": {"SHORTNAME": "博时标普500ETF联接A", "FULLNAME": "基金全称",
+                             "FTYPE": "指数型-海外股票"}}
+        response.__enter__.return_value.read.return_value = json.dumps(payload).encode()
+        with mock.patch.object(app.urllib.request, "urlopen", return_value=response):
+            fund = app.lookup_fund("050025")
+        self.assertEqual(fund["name"], "博时标普500ETF联接A")
+        self.assertEqual(fund["category"], "海外基金")
 
     def test_cash_account_supports_payment_platform(self):
         item = app.clean_account({"name": "支付宝余额", "account_type": "电子钱包",
