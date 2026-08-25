@@ -7,11 +7,13 @@ import base64
 import json
 import os
 import sqlite3
+import ssl
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+import certifi
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -20,6 +22,7 @@ from cryptography.hazmat.backends import default_backend
 
 ROOT = Path(__file__).resolve().parent
 CONFIG = Path(os.getenv("SHIGUANG_DATA_DIR", str(ROOT / "data"))) / "sync-config.json"
+SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 MAGIC = "SGV1"
 AAD = b"shiguang-vault-v1"
 ITERATIONS = 600_000
@@ -140,11 +143,13 @@ class GitHubVault:
                    "X-GitHub-Api-Version": "2022-11-28", "Content-Type": "application/json",
                    "User-Agent": "shiguang-desktop"})
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
+            with urllib.request.urlopen(request, timeout=30, context=SSL_CONTEXT) as response:
                 return json.loads(response.read())
         except urllib.error.HTTPError as exc:
             if exc.code == 404 and method == "GET": return None
             raise ValueError("GitHub同步失败（HTTP %s）" % exc.code)
+        except urllib.error.URLError as exc:
+            raise ValueError("GitHub同步连接失败：%s" % exc.reason)
 
     def download(self):
         result = self._request()

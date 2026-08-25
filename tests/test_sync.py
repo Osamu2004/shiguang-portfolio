@@ -1,7 +1,9 @@
 import importlib.util
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
+from unittest import mock
 
 spec = importlib.util.spec_from_file_location("sync_engine", Path(__file__).parents[1] / "sync_engine.py")
 sync = importlib.util.module_from_spec(spec); spec.loader.exec_module(sync)
@@ -37,5 +39,20 @@ class SyncTest(unittest.TestCase):
         local={"updatedAt":"2","tables":{"coins":[{"id":"coin-1","name":"A","updated_at":"2"}]}}
         merged=sync.merge_vaults(local,{"updatedAt":"1","tables":{}})
         self.assertEqual(merged["tables"]["coins"][0]["id"],"coin-1")
+
+    def test_github_sync_uses_bundled_ca_certificates(self):
+        vault = sync.GitHubVault("owner/repo", "token")
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b'{"content":"", "sha":"x"}'
+        with mock.patch.object(sync.urllib.request, "urlopen", return_value=response) as opened:
+            vault.download()
+        self.assertIs(opened.call_args.kwargs["context"], sync.SSL_CONTEXT)
+
+    def test_github_connection_error_is_readable(self):
+        vault = sync.GitHubVault("owner/repo", "token")
+        with mock.patch.object(sync.urllib.request, "urlopen",
+                               side_effect=urllib.error.URLError("TLS failed")):
+            with self.assertRaisesRegex(ValueError, "GitHub同步连接失败：TLS failed"):
+                vault.download()
 
 if __name__ == "__main__": unittest.main()
