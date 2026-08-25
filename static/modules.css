@@ -102,6 +102,42 @@ form label {
 }
 .strategy-panel::-webkit-scrollbar { width: 9px; }
 .strategy-panel::-webkit-scrollbar-thumb { background: var(--rule); border: 2px solid var(--card); }
+.strategy-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 89;
+  background: rgba(20, 18, 15, .42);
+  backdrop-filter: blur(2px);
+}
+.strategy-backdrop[hidden] { display: none; }
+.strategy-panel[data-mode="drawdown"] {
+  left: 50% !important;
+  top: 50% !important;
+  width: min(520px, calc(100vw - 28px)) !important;
+  height: min(700px, calc(100vh - 36px));
+  height: min(700px, calc(100dvh - 36px));
+  max-height: none;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden !important;
+}
+.strategy-panel[data-mode="drawdown"] > .card-head { flex: 0 0 auto; position: static; }
+.strategy-panel[data-mode="drawdown"] > #strategyFundName { flex: 0 0 auto; }
+.strategy-panel[data-mode="drawdown"] > #strategyForm {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px 10px 12px 2px;
+}
+.strategy-panel[data-mode="drawdown"] #strategyForm > button.primary {
+  position: sticky;
+  bottom: 0;
+  width: 100%;
+  box-shadow: 0 -10px 18px var(--card);
+}
 .strategy-panel[hidden] { display: none; }
 .strategy-panel .card-head h2 { margin: 0; font-size: 19px; }
 .drawdown-rules {
