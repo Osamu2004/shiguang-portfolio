@@ -345,6 +345,8 @@ class Handler(SimpleHTTPRequestHandler):
                 for row in rows:
                     market=conn.execute("SELECT day,unit_nav,cumulative_nav,daily_change_pct FROM fund_market_daily WHERE code=? ORDER BY day DESC LIMIT 1",(row.get("code"),)).fetchone()
                     if market: row["public_market"]=dict(market)
+                    history=[dict(x) for x in conn.execute("SELECT day,unit_nav,daily_change_pct FROM fund_market_daily WHERE code=? ORDER BY day DESC LIMIT 30",(row.get("code"),))]
+                    row["public_market_history"]=list(reversed(history))
             total = sum(Decimal(r["market_value"]) for r in rows)
             account_total = sum(Decimal(r["balance"]) for r in accounts)
             total_cost = sum(Decimal(r["cost"]) for r in rows)
