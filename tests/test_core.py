@@ -31,10 +31,25 @@ class CoreTest(unittest.TestCase):
         payload = {"Datas": {"SHORTNAME": "博时标普500ETF联接A", "FULLNAME": "基金全称",
                              "FTYPE": "指数型-海外股票"}}
         response.__enter__.return_value.read.return_value = json.dumps(payload).encode()
-        with mock.patch.object(app.urllib.request, "urlopen", return_value=response):
+        with mock.patch.object(app, "load_fund_catalog", return_value={}), \
+             mock.patch.object(app.urllib.request, "urlopen", return_value=response):
             fund = app.lookup_fund("050025")
         self.assertEqual(fund["name"], "博时标普500ETF联接A")
         self.assertEqual(fund["category"], "海外基金")
+
+    def test_fund_lookup_prefers_local_catalog(self):
+        catalog = {"050025": {"name": "博时标普500ETF联接A", "fundType": "指数型-海外股票",
+                              "category": "海外基金"}}
+        with mock.patch.object(app, "load_fund_catalog", return_value=catalog), \
+             mock.patch.object(app.urllib.request, "urlopen") as opened:
+            fund = app.lookup_fund("050025")
+        self.assertEqual(fund["name"], "博时标普500ETF联接A")
+        opened.assert_not_called()
+
+    def test_two_of_three_alipay_fields_are_enough(self):
+        item = app.clean_item({"name": "ETF", "market_value": "1100", "return_rate": "10%"})
+        self.assertEqual(item["cost"], "1000.00")
+        self.assertEqual(item["holding_profit"], "100.00")
 
     def test_cash_account_supports_payment_platform(self):
         item = app.clean_account({"name": "支付宝余额", "account_type": "电子钱包",

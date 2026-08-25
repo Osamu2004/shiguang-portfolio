@@ -27,6 +27,7 @@ STATIC = ROOT / "static"
 DATA = Path(os.getenv("SHIGUANG_DATA_DIR", str(Path(__file__).resolve().parent / "data")))
 DB = DATA / "portfolio.db"
 SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
+FUND_CATALOG = DATA / "fund-catalog.json"
 
 
 def db():
@@ -53,6 +54,11 @@ def db():
     conn.execute("""CREATE TABLE IF NOT EXISTS portfolio_snapshots (
       day TEXT PRIMARY KEY, market_value TEXT NOT NULL, source TEXT NOT NULL,
       created_at TEXT NOT NULL
+    )""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS holding_snapshots (
+      day TEXT NOT NULL, holding_key TEXT NOT NULL, code TEXT, name TEXT NOT NULL,
+      market_value TEXT NOT NULL, holding_profit TEXT NOT NULL, return_rate TEXT NOT NULL,
+      source TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(day,holding_key)
     )""")
     conn.execute("""CREATE TABLE IF NOT EXISTS coins (id TEXT PRIMARY KEY,name TEXT NOT NULL,series TEXT,
       issue_year INTEGER,face_value TEXT NOT NULL DEFAULT '0',material TEXT,image_path TEXT,
@@ -88,26 +94,76 @@ def clean_item(raw):
     if not name:
         raise ValueError("缺少基金名称")
     code = re.sub(r"\D", "", str(raw.get("code", "")))[:6]
-    allowed_categories = {"宽基指数", "行业主题", "债券基金", "货币基金", "黄金商品", "海外基金"}
+    allowed_categories = {"宽基指数", "行业主题", "股票基金", "混合基金", "债券基金", "货币基金", "黄金商品", "海外基金", "其他基金"}
     category = str(raw.get("category", "宽基指数")).strip()
     if category not in allowed_categories:
         raise ValueError("基金类别不正确")
-    market_value = money(raw.get("market_value", 0))
-    if raw.get("holding_profit") not in (None, ""):
-        cost_value = Decimal(market_value) - signed_money(raw["holding_profit"])
-        if cost_value < 0:
-            raise ValueError("持有收益不能大于当前金额")
-        cost = money(cost_value)
+    present = {key: raw.get(key) not in (None, "") for key in ("market_value", "holding_profit", "return_rate")}
+    if sum(present.values()) < 2 and raw.get("cost") in (None, ""):
+        raise ValueError("当前金额、持有收益、收益率请至少填写两项")
+    value = Decimal(money(raw["market_value"])) if present["market_value"] else None
+    profit = signed_money(raw["holding_profit"]) if present["holding_profit"] else None
+    try:
+        rate = Decimal(str(raw.get("return_rate", "")).replace("%", "").strip()) / 100 if present["return_rate"] else None
+    except InvalidOperation:
+        raise ValueError("收益率格式不正确")
+    if value is not None and profit is not None:
+        cost_value = value - profit
+    elif value is not None and rate is not None:
+        if rate <= -1: raise ValueError("收益率必须大于 -100%")
+        cost_value = value / (Decimal("1") + rate); profit = value - cost_value
+    elif profit is not None and rate is not None:
+        if rate == 0: raise ValueError("只填持有收益和收益率时，收益率不能为 0")
+        cost_value = profit / rate; value = cost_value + profit
     else:
-        cost = money(raw.get("cost", market_value))
+        value = Decimal(money(raw.get("market_value", 0))); cost_value = Decimal(money(raw.get("cost", value))); profit = value - cost_value
+    if cost_value < 0 or value < 0:
+        raise ValueError("根据填写数据无法得到有效持仓")
+    market_value, cost = money(value), money(cost_value)
+    calculated_rate = (value - cost_value) / cost_value * 100 if cost_value else Decimal("0")
     return {"code": code, "name": name, "category": category, "market_value": market_value,
-            "cost": cost}
+            "cost": cost, "holding_profit": money(abs(profit)) if profit >= 0 else "-" + money(abs(profit)),
+            "return_rate": str(calculated_rate.quantize(Decimal("0.01")))}
+
+
+def fund_category(fund_type):
+    fund_type = str(fund_type or "")
+    if "海外" in fund_type or "QDII" in fund_type.upper(): return "海外基金"
+    if "债" in fund_type: return "债券基金"
+    if "货币" in fund_type: return "货币基金"
+    if "黄金" in fund_type or "商品" in fund_type: return "黄金商品"
+    if "指数" in fund_type or "ETF" in fund_type.upper(): return "宽基指数"
+    if "混合" in fund_type: return "混合基金"
+    if "股票" in fund_type: return "股票基金"
+    return "其他基金"
+
+
+def load_fund_catalog():
+    try:
+        if FUND_CATALOG.exists() and time.time() - FUND_CATALOG.stat().st_mtime < 7 * 86400:
+            return json.loads(FUND_CATALOG.read_text())
+        request = urllib.request.Request("https://fund.eastmoney.com/js/fundcode_search.js",
+          headers={"Referer": "https://fund.eastmoney.com/", "User-Agent": "shiguang-desktop"})
+        with urllib.request.urlopen(request, timeout=20, context=SSL_CONTEXT) as response:
+            raw = response.read().decode("utf-8-sig", errors="replace")
+        rows = json.loads(raw[raw.find("["):raw.rfind("]") + 1])
+        catalog = {row[0]: {"name": row[2], "fundType": row[3], "category": fund_category(row[3])}
+                   for row in rows if len(row) >= 4 and len(row[0]) == 6}
+        DATA.mkdir(parents=True, exist_ok=True)
+        FUND_CATALOG.write_text(json.dumps(catalog, ensure_ascii=False, separators=(",", ":")))
+        return catalog
+    except (OSError, urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+        return {}
 
 
 def lookup_fund(code):
     code = re.sub(r"\D", "", str(code))[:6]
     if len(code) != 6:
         raise ValueError("请输入 6 位基金代码")
+    cached = load_fund_catalog().get(code)
+    if cached:
+        return {"code": code, "name": cached["name"], "fullName": "",
+                "fundType": cached["fundType"], "category": cached["category"]}
     query = urllib.parse.urlencode({"FCODE": code, "deviceid": "Wap", "plat": "Wap",
                                     "product": "EFund", "version": "2.0.0"})
     request = urllib.request.Request("https://fundmobapi.eastmoney.com/FundMNewApi/FundMNDetailInformation?" + query,
@@ -121,8 +177,7 @@ def lookup_fund(code):
     data = payload.get("Datas") or {}
     if not data.get("SHORTNAME"):
         raise ValueError("未找到该基金代码")
-    fund_type = str(data.get("FTYPE", ""))
-    category = "海外基金" if "海外" in fund_type else "债券基金" if "债" in fund_type else "货币基金" if "货币" in fund_type else "宽基指数"
+    fund_type = str(data.get("FTYPE", "")); category = fund_category(fund_type)
     return {"code": code, "name": data["SHORTNAME"], "fullName": data.get("FULLNAME", ""),
             "fundType": fund_type, "category": category}
 
@@ -175,6 +230,12 @@ class Handler(SimpleHTTPRequestHandler):
             except ValueError as exc:
                 self.json_response({"error": str(exc)}, 404)
             return
+        if self.path.startswith("/api/holdings/history?"):
+            code = re.sub(r"\D", "", urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("code", [""])[0])[:6]
+            with db() as conn:
+                rows = [dict(r) for r in conn.execute(
+                  "SELECT * FROM holding_snapshots WHERE holding_key=? ORDER BY day DESC LIMIT 365", (code,))]
+            self.json_response({"history": rows}); return
         if self.path == "/api/state":
             with db() as conn:
                 rows = [dict(r) for r in conn.execute("SELECT * FROM holdings ORDER BY market_value + 0 DESC")]
@@ -201,6 +262,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "exportedAt": datetime.now().isoformat(),
                     "accounts": [dict(r) for r in conn.execute("SELECT * FROM accounts ORDER BY id")],
                     "holdings": [dict(r) for r in conn.execute("SELECT * FROM holdings ORDER BY id")],
+                    "holdingSnapshots": [dict(r) for r in conn.execute("SELECT * FROM holding_snapshots ORDER BY day,holding_key")],
                     "healthDaily": [dict(r) for r in conn.execute("SELECT * FROM health_daily ORDER BY day")],
                     "portfolioSnapshots": [dict(r) for r in conn.execute("SELECT * FROM portfolio_snapshots ORDER BY day")],
                 }
@@ -234,10 +296,20 @@ class Handler(SimpleHTTPRequestHandler):
                 item = clean_item(self.read_json())
                 now = datetime.now().isoformat(timespec="seconds")
                 with db() as conn:
-                    conn.execute("INSERT INTO holdings(code,name,category,market_value,cost,updated_at) VALUES(?,?,?,?,?,?)",
-                                 (item["code"] or None, item["name"], item["category"], item["market_value"], item["cost"], now))
+                    existing = conn.execute("SELECT id FROM holdings WHERE code=? OR name=? LIMIT 1",
+                                            (item["code"], item["name"])).fetchone()
+                    values = (item["code"] or None, item["name"], item["category"], item["market_value"], item["cost"], now)
+                    if existing:
+                        conn.execute("UPDATE holdings SET code=?,name=?,category=?,market_value=?,cost=?,updated_at=? WHERE id=?",
+                                     values + (existing[0],))
+                    else:
+                        conn.execute("INSERT INTO holdings(code,name,category,market_value,cost,updated_at) VALUES(?,?,?,?,?,?)", values)
+                    key = item["code"] or "name:" + item["name"]
+                    conn.execute("INSERT OR REPLACE INTO holding_snapshots VALUES(?,?,?,?,?,?,?,?,?)",
+                      (datetime.now().date().isoformat(), key, item["code"] or None, item["name"], item["market_value"],
+                       item["holding_profit"], item["return_rate"], "manual", now))
                     save_asset_snapshot(conn, now)
-                self.json_response({"ok": True})
+                self.json_response({"ok": True, "mode": "updated" if existing else "created"})
                 return
             if self.path == "/api/accounts":
                 item = clean_account(self.read_json())
