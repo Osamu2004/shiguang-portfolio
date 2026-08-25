@@ -58,13 +58,17 @@
 .strategy-panel[hidden] { display: none; }
 .strategy-panel .card-head h2 { margin: 0; font-size: 19px; }
 
-.fund-sparkline svg { height: 48px; }
+.fund-sparkline,
+.fund-sparkline svg { width: 150px; }
+.fund-sparkline svg { height: 52px; }
 .fund-sparkline .fund-axis,
-.fund-sparkline .fund-tick {
+.fund-sparkline .fund-tick,
+.fund-sparkline .fund-grid {
   stroke: var(--rule);
   stroke-width: 1;
   vector-effect: non-scaling-stroke;
 }
+.fund-sparkline .fund-grid { opacity: .35; stroke-dasharray: 2 3; }
 .fund-sparkline .fund-axis-label,
 .fund-sparkline .fund-empty-label {
   fill: var(--ink-subtle);
@@ -84,13 +88,13 @@
 
 .fund-row {
   display: grid;
-  grid-template-columns: minmax(210px, 1fr) 118px 130px 125px 145px;
+  grid-template-columns: minmax(210px, 1fr) 156px 130px 125px 145px;
   gap: 16px;
   align-items: center;
 }
 .fund-columns {
   display: grid;
-  grid-template-columns: minmax(210px, 1fr) 118px 130px 125px 145px 190px;
+  grid-template-columns: minmax(210px, 1fr) 156px 130px 125px 145px 190px;
   gap: 16px;
   align-items: center;
   padding: 9px 20px;
@@ -104,7 +108,7 @@
 .fund-columns span:nth-child(n+2) { text-align: right; }
 .fund-columns span:last-child { text-align: center; }
 .fund-row.manage-row {
-  grid-template-columns: minmax(210px, 1fr) 118px 130px 125px 145px 190px !important;
+  grid-template-columns: minmax(210px, 1fr) 156px 130px 125px 145px 190px !important;
   padding: 15px 20px;
 }
 .manage-row .fund-identity { grid-column: 1; grid-row: 1; }
@@ -128,7 +132,7 @@
 @media (max-width: 1120px) {
   .fund-columns { display: none; }
   #holdingList2 { overflow-x: auto; }
-  .fund-row.manage-row { min-width: 970px; }
+  .fund-row.manage-row { min-width: 1010px; }
 }
 
 @media (max-width: 850px) {
