@@ -80,6 +80,10 @@ def db():
       market_value TEXT NOT NULL, holding_profit TEXT NOT NULL, return_rate TEXT NOT NULL,
       source TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(day,holding_key)
     )""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS fund_market_daily (
+      code TEXT NOT NULL,day TEXT NOT NULL,unit_nav TEXT NOT NULL,cumulative_nav TEXT,
+      daily_change_pct TEXT NOT NULL,source TEXT NOT NULL,fetched_at TEXT NOT NULL,
+      PRIMARY KEY(code,day))""")
     conn.execute("""CREATE TABLE IF NOT EXISTS coins (id TEXT PRIMARY KEY,name TEXT NOT NULL,series TEXT,
       issue_year INTEGER,face_value TEXT NOT NULL DEFAULT '0',material TEXT,image_path TEXT,
       image_source TEXT,image_license TEXT,updated_at TEXT NOT NULL)""")
@@ -225,6 +229,35 @@ def lookup_fund(code):
             "fundType": fund_type, "category": category}
 
 
+def fetch_fund_market(code, page_size=90):
+    code = re.sub(r"\D", "", str(code))[:6]
+    if len(code) != 6:
+        raise ValueError("请输入 6 位基金代码")
+    query = urllib.parse.urlencode({"FCODE": code, "pageIndex": 1, "pageSize": page_size,
+      "plat": "Android", "appType": "ttjj", "product": "EFund", "version": "6.2.8",
+      "deviceid": "shiguang-desktop"})
+    request = urllib.request.Request("https://fundmobapi.eastmoney.com/FundMNewApi/FundMNHisNetList?" + query,
+      headers={"Accept": "application/json", "Referer": "https://fund.eastmoney.com/",
+               "User-Agent": "shiguang-desktop"})
+    try:
+        with urllib.request.urlopen(request, timeout=15, context=SSL_CONTEXT) as response:
+            payload = json.loads(response.read())
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+        raise ValueError("公开基金行情连接失败，请稍后重试")
+    rows=[]
+    for raw in payload.get("Datas") or []:
+        day=str(raw.get("FSRQ", "")); nav=str(raw.get("DWJZ", "")).strip()
+        change=str(raw.get("JZZZL", "")).replace("%", "").strip()
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) or not nav or change in ("", "--"): continue
+        try: Decimal(nav); Decimal(change)
+        except InvalidOperation: continue
+        rows.append({"code":code,"day":day,"unit_nav":nav,
+          "cumulative_nav":str(raw.get("LJJZ", "")).strip(),"daily_change_pct":change,
+          "source":"eastmoney-public-nav"})
+    if not rows: raise ValueError("暂未获取到该基金的公开净值记录")
+    return rows
+
+
 def clean_account(raw):
     name = str(raw.get("name", "")).strip()[:80]
     if not name:
@@ -297,6 +330,11 @@ class Handler(SimpleHTTPRequestHandler):
                 rows = [dict(r) for r in conn.execute(
                   "SELECT * FROM holding_snapshots WHERE holding_key=? ORDER BY day DESC LIMIT 365", (code,))]
             self.json_response({"history": rows}); return
+        if self.path.startswith("/api/funds/market?"):
+            code = re.sub(r"\D", "", urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("code", [""])[0])[:6]
+            with db() as conn: rows=[dict(r) for r in conn.execute(
+              "SELECT * FROM fund_market_daily WHERE code=? ORDER BY day DESC LIMIT 365",(code,))]
+            self.json_response({"history":rows}); return
         if self.path == "/api/state":
             with db() as conn:
                 rows = [dict(r) for r in conn.execute("SELECT * FROM holdings WHERE archived_at IS NULL ORDER BY market_value + 0 DESC")]
@@ -304,6 +342,9 @@ class Handler(SimpleHTTPRequestHandler):
                 accounts = [dict(r) for r in conn.execute("SELECT * FROM accounts ORDER BY balance + 0 DESC")]
                 snapshots = [dict(r) for r in conn.execute("SELECT * FROM portfolio_snapshots ORDER BY day LIMIT 365")]
                 coin_row = conn.execute("SELECT COALESCE(SUM(quantity),0),COALESCE(SUM(estimated_value + 0),0) FROM coin_collection").fetchone()
+                for row in rows:
+                    market=conn.execute("SELECT day,unit_nav,cumulative_nav,daily_change_pct FROM fund_market_daily WHERE code=? ORDER BY day DESC LIMIT 1",(row.get("code"),)).fetchone()
+                    if market: row["public_market"]=dict(market)
             total = sum(Decimal(r["market_value"]) for r in rows)
             account_total = sum(Decimal(r["balance"]) for r in accounts)
             total_cost = sum(Decimal(r["cost"]) for r in rows)
@@ -334,6 +375,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "accounts": [dict(r) for r in conn.execute("SELECT * FROM accounts ORDER BY id")],
                     "holdings": [dict(r) for r in conn.execute("SELECT * FROM holdings ORDER BY id")],
                     "holdingSnapshots": [dict(r) for r in conn.execute("SELECT * FROM holding_snapshots ORDER BY day,holding_key")],
+                    "fundMarketDaily": [dict(r) for r in conn.execute("SELECT * FROM fund_market_daily ORDER BY day,code")],
                     "healthDaily": [dict(r) for r in conn.execute("SELECT * FROM health_daily ORDER BY day")],
                     "portfolioSnapshots": [dict(r) for r in conn.execute("SELECT * FROM portfolio_snapshots ORDER BY day")],
                     "auditLogs": [dict(r) for r in conn.execute("SELECT * FROM audit_logs ORDER BY created_at")],
@@ -429,6 +471,21 @@ class Handler(SimpleHTTPRequestHandler):
                 self.json_response({"ok": True, "mode": "updated" if existing else "created",
                                     "preserved": True, "values": item})
                 return
+            if self.path == "/api/funds/market/refresh":
+                raw=self.read_json(); requested=re.sub(r"\D", "", str(raw.get("code", "")))[:6]
+                with db() as conn:
+                    codes=[requested] if len(requested)==6 else [r[0] for r in conn.execute(
+                      "SELECT DISTINCT code FROM holdings WHERE archived_at IS NULL AND length(code)=6")]
+                updated=0; errors={}; now=datetime.now().isoformat(timespec="seconds")
+                for code in codes:
+                    try:
+                        rows=fetch_fund_market(code)
+                        with db() as conn:
+                            for row in rows: conn.execute("INSERT OR REPLACE INTO fund_market_daily VALUES(?,?,?,?,?,?,?)",
+                              (row["code"],row["day"],row["unit_nav"],row["cumulative_nav"],row["daily_change_pct"],row["source"],now))
+                        updated+=1
+                    except ValueError as exc: errors[code]=str(exc)
+                self.json_response({"ok":True,"updated":updated,"errors":errors}); return
             if self.path in ("/api/holdings/archive", "/api/holdings/restore"):
                 code = re.sub(r"\D", "", str(self.read_json().get("code", "")))[:6]
                 if len(code) != 6: raise ValueError("基金代码不正确")

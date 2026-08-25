@@ -68,7 +68,7 @@ def export_data(db_path):
     conn = sqlite3.connect(str(db_path)); conn.row_factory = sqlite3.Row
     try:
         tables = {}
-        for name in ("accounts", "holdings", "holding_snapshots", "health_daily", "portfolio_snapshots", "coins", "coin_collection", "graded_coins", "scholar_profiles", "scholar_snapshots", "scholar_papers", "scholar_paper_snapshots", "audit_logs", "deleted_records"):
+        for name in ("accounts", "holdings", "holding_snapshots", "fund_market_daily", "health_daily", "portfolio_snapshots", "coins", "coin_collection", "graded_coins", "scholar_profiles", "scholar_snapshots", "scholar_papers", "scholar_paper_snapshots", "audit_logs", "deleted_records"):
             exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
             tables[name] = [dict(r) for r in conn.execute("SELECT * FROM " + name)] if exists else []
         return {"schemaVersion": 1, "updatedAt": datetime.now(timezone.utc).isoformat(), "tables": tables}
@@ -80,6 +80,7 @@ def _record_key(table, row):
     if table in ("health_daily", "portfolio_snapshots"):
         return str(row["day"])
     if table == "holding_snapshots": return str(row["day"]) + ":" + str(row["holding_key"])
+    if table == "fund_market_daily": return str(row["code"]) + ":" + str(row["day"])
     if table in ("coins", "graded_coins"): return str(row["id"])
     if table == "scholar_profiles": return str(row["profile_id"])
     if table == "scholar_snapshots": return str(row["profile_id"])+":"+str(row["day"])
@@ -95,7 +96,7 @@ def merge_vaults(local, remote):
     if not remote:
         return local
     result = {"schemaVersion": 1, "updatedAt": max(local.get("updatedAt", ""), remote.get("updatedAt", "")), "tables": {}}
-    for table in ("accounts", "holdings", "holding_snapshots", "health_daily", "portfolio_snapshots", "coins", "coin_collection", "graded_coins", "scholar_profiles", "scholar_snapshots", "scholar_papers", "scholar_paper_snapshots", "audit_logs", "deleted_records"):
+    for table in ("accounts", "holdings", "holding_snapshots", "fund_market_daily", "health_daily", "portfolio_snapshots", "coins", "coin_collection", "graded_coins", "scholar_profiles", "scholar_snapshots", "scholar_papers", "scholar_paper_snapshots", "audit_logs", "deleted_records"):
         merged = {}
         for source in (remote, local):
             for row in source.get("tables", {}).get(table, []):
@@ -131,6 +132,9 @@ def import_data(db_path, payload):
         for row in payload["tables"].get("holding_snapshots", []):
             conn.execute("INSERT OR REPLACE INTO holding_snapshots VALUES(?,?,?,?,?,?,?,?,?)", tuple(row.get(k) for k in
               ("day","holding_key","code","name","market_value","holding_profit","return_rate","source","created_at")))
+        for row in payload["tables"].get("fund_market_daily", []):
+            conn.execute("INSERT OR REPLACE INTO fund_market_daily VALUES(?,?,?,?,?,?,?)", tuple(row.get(k) for k in
+              ("code","day","unit_nav","cumulative_nav","daily_change_pct","source","fetched_at")))
         for row in payload["tables"].get("health_daily", []):
             conn.execute("INSERT OR REPLACE INTO health_daily VALUES(?,?,?,?,?,?,?,?)", tuple(row.get(k) for k in
               ("day","steps","sleep_minutes","resting_heart_rate","active_energy","weight","source","updated_at")))

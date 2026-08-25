@@ -60,6 +60,17 @@ class CoreTest(unittest.TestCase):
         self.assertEqual(fund["name"], "博时标普500ETF联接A")
         opened.assert_not_called()
 
+    def test_public_fund_market_parses_official_nav_change(self):
+        response = mock.MagicMock()
+        payload = {"Datas": [{"FSRQ":"2026-08-25","DWJZ":"1.2345",
+          "LJJZ":"2.3456","JZZZL":"-1.27"}]}
+        response.__enter__.return_value.read.return_value = json.dumps(payload).encode()
+        with mock.patch.object(app.urllib.request, "urlopen", return_value=response):
+            rows = app.fetch_fund_market("050025")
+        self.assertEqual(rows[0]["day"], "2026-08-25")
+        self.assertEqual(rows[0]["daily_change_pct"], "-1.27")
+        self.assertEqual(rows[0]["unit_nav"], "1.2345")
+
     def test_all_three_platform_fields_are_required(self):
         with self.assertRaisesRegex(ValueError, "原样填写"):
             app.clean_item({"name": "ETF", "market_value": "1100", "return_rate": "10%"})

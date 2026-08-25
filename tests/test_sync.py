@@ -59,6 +59,15 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(len(merged["tables"]["holding_snapshots"]), 1)
         self.assertEqual(merged["tables"]["holding_snapshots"][0]["market_value"], "1100")
 
+    def test_public_fund_market_is_merged_by_code_and_day(self):
+        local={"updatedAt":"2","tables":{"fund_market_daily":[
+          {"code":"050025","day":"2026-08-25","unit_nav":"1.2","daily_change_pct":"2","fetched_at":"2"}]}}
+        remote={"updatedAt":"1","tables":{"fund_market_daily":[
+          {"code":"050025","day":"2026-08-25","unit_nav":"1.1","daily_change_pct":"1","fetched_at":"1"}]}}
+        merged=sync.merge_vaults(local,remote)
+        self.assertEqual(len(merged["tables"]["fund_market_daily"]),1)
+        self.assertEqual(merged["tables"]["fund_market_daily"][0]["unit_nav"],"1.2")
+
     def test_deleted_snapshot_tombstone_is_synchronized(self):
         local={"updatedAt":"2","tables":{"deleted_records":[
           {"table_name":"holding_snapshots","record_key":"2026-08-25:050025","deleted_at":"2"}]}}
