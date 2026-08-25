@@ -72,13 +72,13 @@
 }
 .fund-sparkline .fund-empty-label { font-size: 8px; }
 .planned-investment {
-  padding: 7px 9px;
-  border: 1px solid var(--rule-soft);
-  background: var(--paper-soft);
+  padding: 0;
+  border: 0;
+  background: transparent;
 }
 .planned-investment.due {
-  border-color: var(--brass);
-  background: var(--brass-soft);
+  border: 0;
+  background: transparent;
 }
 .planned-investment.due b { color: var(--rust); }
 
