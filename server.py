@@ -24,10 +24,17 @@ import certifi
 
 ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 STATIC = ROOT / "static"
+RESOURCES = ROOT / "resources"
 DATA = Path(os.getenv("SHIGUANG_DATA_DIR", str(Path(__file__).resolve().parent / "data")))
 DB = DATA / "portfolio.db"
 SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 FUND_CATALOG = DATA / "fund-catalog.json"
+
+
+def euro2_catalog():
+    path = RESOURCES / "euro2-catalog.json"
+    with path.open(encoding="utf-8") as handle:
+        return json.load(handle)
 
 
 def db():
@@ -304,6 +311,13 @@ class Handler(SimpleHTTPRequestHandler):
             with db() as conn:
                 rows=[dict(r) for r in conn.execute("SELECT c.*,x.quantity,x.grade,x.purchase_price,x.estimated_value,x.storage_location,x.notes FROM coins c LEFT JOIN coin_collection x ON x.coin_id=c.id ORDER BY c.issue_year DESC")]
             self.json_response({"coins":rows}); return
+        if self.path == "/api/coin-catalog":
+            catalog = euro2_catalog()
+            with db() as conn:
+                owned = {r["coin_id"]: dict(r) for r in conn.execute("SELECT * FROM coin_collection")}
+            for coin in catalog["coins"]:
+                coin["collection"] = owned.get(coin["id"])
+            self.json_response(catalog); return
         if self.path == "/api/update/check":
             try:
                 from updater import check
@@ -429,6 +443,26 @@ class Handler(SimpleHTTPRequestHandler):
                     conn.execute("INSERT OR REPLACE INTO coins VALUES(?,?,?,?,?,?,?,?,?,?)",(coin_id,name,str(raw.get("series",""))[:60],int(raw["issue_year"]) if raw.get("issue_year") else None,money(raw.get("face_value",0)),str(raw.get("material",""))[:40],None,"self","self-owned",now))
                     conn.execute("INSERT OR REPLACE INTO coin_collection VALUES(?,?,?,?,?,?,?,?)",(coin_id,qty,str(raw.get("grade",""))[:30],money(raw.get("purchase_price",0)),money(raw.get("estimated_value",0)),str(raw.get("storage_location",""))[:80],str(raw.get("notes",""))[:500],now))
                 self.json_response({"ok":True,"id":coin_id}); return
+            if self.path == "/api/coin-collection":
+                raw = self.read_json(); coin_id = str(raw.get("coin_id", ""))
+                catalog = euro2_catalog()
+                coin = next((x for x in catalog["coins"] if x["id"] == coin_id), None)
+                if not coin: raise ValueError("目录中没有这枚纪念币")
+                qty = int(raw.get("quantity") or 0)
+                if qty < 0: raise ValueError("数量不正确")
+                now = datetime.now().isoformat(timespec="seconds")
+                with db() as conn:
+                    conn.execute("INSERT OR IGNORE INTO coins VALUES(?,?,?,?,?,?,?,?,?,?)",
+                                 (coin_id, coin["feature"], coin["country"], coin["year"], "2.00",
+                                  "双金属", None, coin["official_url"], "ECB official catalogue", now))
+                    if qty == 0:
+                        conn.execute("DELETE FROM coin_collection WHERE coin_id=?", (coin_id,))
+                    else:
+                        conn.execute("INSERT OR REPLACE INTO coin_collection VALUES(?,?,?,?,?,?,?,?)",
+                                     (coin_id, qty, str(raw.get("grade", ""))[:30],
+                                      money(raw.get("purchase_price", 0)), money(raw.get("estimated_value", 0)),
+                                      str(raw.get("storage_location", ""))[:80], str(raw.get("notes", ""))[:500], now))
+                self.json_response({"ok": True, "id": coin_id}); return
             if self.path == "/api/update/install":
                 from updater import stage_and_install
                 result = stage_and_install(); self.json_response(result)

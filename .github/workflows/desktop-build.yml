@@ -30,10 +30,10 @@ jobs:
       - name: Build Windows
         if: runner.os == 'Windows'
         shell: cmd
-        run: pyinstaller --noconfirm --clean --windowed --name Shiguang --collect-all webview --add-data "static;static" desktop.py
+        run: pyinstaller --noconfirm --clean --windowed --name Shiguang --collect-all webview --add-data "static;static" --add-data "resources;resources" desktop.py
       - name: Build macOS
         if: runner.os == 'macOS'
-        run: pyinstaller --noconfirm --clean --windowed --name Shiguang --collect-all webview --add-data "static:static" desktop.py
+        run: pyinstaller --noconfirm --clean --windowed --name Shiguang --collect-all webview --add-data "static:static" --add-data "resources:resources" desktop.py
       - name: Package Windows update
         if: runner.os == 'Windows'
         shell: pwsh
