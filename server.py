@@ -110,10 +110,18 @@ def clean_item(raw):
         rate = Decimal(str(raw.get("return_rate", "")).replace("%", "").strip()) / 100 if present["return_rate"] else None
     except InvalidOperation:
         raise ValueError("收益率格式不正确")
+    if rate is not None and rate <= -1:
+        raise ValueError("收益率必须大于 -100%")
+    if all(present.values()):
+        cost_value = value - profit
+        if cost_value <= 0:
+            raise ValueError("三项数据无法得到有效本金，请检查")
+        expected_rate = profit / cost_value
+        if abs(expected_rate - rate) > Decimal("0.0002"):
+            raise ValueError("金额、持有收益和收益率不一致，请检查后保存")
     if value is not None and profit is not None:
         cost_value = value - profit
     elif value is not None and rate is not None:
-        if rate <= -1: raise ValueError("收益率必须大于 -100%")
         cost_value = value / (Decimal("1") + rate); profit = value - cost_value
     elif profit is not None and rate is not None:
         if rate == 0: raise ValueError("只填持有收益和收益率时，收益率不能为 0")
@@ -311,9 +319,10 @@ class Handler(SimpleHTTPRequestHandler):
                     key = item["code"] or "name:" + item["name"]
                     conn.execute("INSERT OR REPLACE INTO holding_snapshots VALUES(?,?,?,?,?,?,?,?,?)",
                       (datetime.now().date().isoformat(), key, item["code"] or None, item["name"], item["market_value"],
-                       item["holding_profit"], item["return_rate"], "manual", now))
+                       item["holding_profit"], item["return_rate"], "manual-verified", now))
                     save_asset_snapshot(conn, now)
-                self.json_response({"ok": True, "mode": "updated" if existing else "created"})
+                self.json_response({"ok": True, "mode": "updated" if existing else "created",
+                                    "verified": True, "calculated": item})
                 return
             if self.path in ("/api/holdings/archive", "/api/holdings/restore"):
                 code = re.sub(r"\D", "", str(self.read_json().get("code", "")))[:6]

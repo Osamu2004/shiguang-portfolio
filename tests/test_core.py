@@ -64,6 +64,19 @@ class CoreTest(unittest.TestCase):
         self.assertEqual(item["cost"], "1000.00")
         self.assertEqual(item["holding_profit"], "100.00")
 
+    def test_profit_and_rate_calculate_market_value(self):
+        item = app.clean_item({"name": "ETF", "holding_profit": "100", "return_rate": "10"})
+        self.assertEqual(item["market_value"], "1100.00")
+        self.assertEqual(item["cost"], "1000.00")
+
+    def test_inconsistent_three_fields_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "不一致"):
+            app.clean_item({"name": "ETF", "market_value": "1100", "holding_profit": "100", "return_rate": "20"})
+
+    def test_consistent_rounded_rate_is_accepted(self):
+        item = app.clean_item({"name": "ETF", "market_value": "1100", "holding_profit": "100", "return_rate": "10.00"})
+        self.assertEqual(item["return_rate"], "10.00")
+
     def test_cash_account_supports_payment_platform(self):
         item = app.clean_account({"name": "支付宝余额", "account_type": "电子钱包",
                                   "platform": "支付宝", "balance": "88.6"})
