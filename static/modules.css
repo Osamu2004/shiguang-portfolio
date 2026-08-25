@@ -4,6 +4,26 @@
   display: grid;
   gap: 10px;
 }
+body,
+button,
+label,
+a,
+span,
+small,
+strong,
+b,
+p,
+h1,
+h2,
+h3,
+h4,
+td,
+th,
+svg text,
+.ngc-row {
+  user-select: text;
+  -webkit-user-select: text;
+}
 .module-switches > b { font-size: 13px; }
 .module-switches > small { color: var(--muted); font-size: 11px; }
 .module-switches label {
