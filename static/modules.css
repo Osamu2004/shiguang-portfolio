@@ -75,6 +75,7 @@
   font: 7px ui-monospace, monospace;
 }
 .fund-sparkline .fund-empty-label { font-size: 8px; }
+.fund-sparkline .fund-single-point { fill: currentColor; }
 .planned-investment {
   padding: 0;
   border: 0;
