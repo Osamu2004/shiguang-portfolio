@@ -15,10 +15,13 @@ class CoreTest(unittest.TestCase):
             with mock.patch.object(app, "DATA", data), mock.patch.object(app, "DB", data / "portfolio.db"):
                 with app.db() as conn:
                     columns = {row[1] for row in conn.execute("PRAGMA table_info(holdings)")}
+                    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
                     conn.execute("INSERT INTO holdings(code,name,category,market_value,cost,updated_at) VALUES(?,?,?,?,?,?)",
                                  ("050025", "测试基金", "海外基金", "100", "90", "2026-08-25T10:00:00"))
                 with app.db() as conn:
                     self.assertIn("archived_at", columns)
+                    self.assertIn("audit_logs", tables)
+                    self.assertIn("deleted_records", tables)
                     self.assertEqual(conn.execute("SELECT name FROM holdings WHERE code='050025'").fetchone()[0], "测试基金")
 
     def test_holding_keeps_cost_separate_from_value(self):

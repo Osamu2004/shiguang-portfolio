@@ -68,7 +68,7 @@ def export_data(db_path):
     conn = sqlite3.connect(str(db_path)); conn.row_factory = sqlite3.Row
     try:
         tables = {}
-        for name in ("accounts", "holdings", "holding_snapshots", "health_daily", "portfolio_snapshots", "coins", "coin_collection"):
+        for name in ("accounts", "holdings", "holding_snapshots", "health_daily", "portfolio_snapshots", "coins", "coin_collection", "audit_logs", "deleted_records"):
             exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
             tables[name] = [dict(r) for r in conn.execute("SELECT * FROM " + name)] if exists else []
         return {"schemaVersion": 1, "updatedAt": datetime.now(timezone.utc).isoformat(), "tables": tables}
@@ -82,6 +82,8 @@ def _record_key(table, row):
     if table == "holding_snapshots": return str(row["day"]) + ":" + str(row["holding_key"])
     if table == "coins": return str(row["id"])
     if table == "coin_collection": return str(row["coin_id"])
+    if table == "audit_logs": return str(row["id"])
+    if table == "deleted_records": return str(row["table_name"]) + ":" + str(row["record_key"])
     return str(row.get("code") or "name:" + row["name"])
 
 
@@ -89,14 +91,14 @@ def merge_vaults(local, remote):
     if not remote:
         return local
     result = {"schemaVersion": 1, "updatedAt": max(local.get("updatedAt", ""), remote.get("updatedAt", "")), "tables": {}}
-    for table in ("accounts", "holdings", "holding_snapshots", "health_daily", "portfolio_snapshots", "coins", "coin_collection"):
+    for table in ("accounts", "holdings", "holding_snapshots", "health_daily", "portfolio_snapshots", "coins", "coin_collection", "audit_logs", "deleted_records"):
         merged = {}
         for source in (remote, local):
             for row in source.get("tables", {}).get(table, []):
                 key = _record_key(table, row)
                 previous = merged.get(key)
-                stamp = row.get("updated_at") or row.get("created_at") or source.get("updatedAt", "")
-                old_stamp = (previous or {}).get("updated_at") or (previous or {}).get("created_at") or ""
+                stamp = row.get("updated_at") or row.get("created_at") or row.get("deleted_at") or source.get("updatedAt", "")
+                old_stamp = (previous or {}).get("updated_at") or (previous or {}).get("created_at") or (previous or {}).get("deleted_at") or ""
                 if previous is None or stamp >= old_stamp:
                     merged[key] = row
         result["tables"][table] = list(merged.values())
@@ -134,6 +136,17 @@ def import_data(db_path, payload):
             conn.execute("INSERT OR REPLACE INTO coins VALUES(?,?,?,?,?,?,?,?,?,?)",tuple(row.get(k) for k in ("id","name","series","issue_year","face_value","material","image_path","image_source","image_license","updated_at")))
         for row in payload["tables"].get("coin_collection", []):
             conn.execute("INSERT OR REPLACE INTO coin_collection VALUES(?,?,?,?,?,?,?,?)",tuple(row.get(k) for k in ("coin_id","quantity","grade","purchase_price","estimated_value","storage_location","notes","updated_at")))
+        for row in payload["tables"].get("audit_logs", []):
+            conn.execute("INSERT OR IGNORE INTO audit_logs VALUES(?,?,?,?,?)", tuple(row.get(k) for k in
+              ("id","event_type","summary","details","created_at")))
+        for row in payload["tables"].get("deleted_records", []):
+            conn.execute("INSERT OR REPLACE INTO deleted_records VALUES(?,?,?)", tuple(row.get(k) for k in
+              ("table_name","record_key","deleted_at")))
+            if row.get("table_name") == "holding_snapshots" and ":" in row.get("record_key", ""):
+                day, key = row["record_key"].split(":", 1)
+                conn.execute("DELETE FROM holding_snapshots WHERE day=? AND holding_key=?", (day, key))
+            if row.get("table_name") == "holdings":
+                conn.execute("DELETE FROM holdings WHERE code=?", (row.get("record_key"),))
         conn.commit()
     finally:
         conn.close()

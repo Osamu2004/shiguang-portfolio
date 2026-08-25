@@ -69,7 +69,20 @@ def db():
     conn.execute("""CREATE TABLE IF NOT EXISTS coin_collection (coin_id TEXT PRIMARY KEY,quantity INTEGER NOT NULL,
       grade TEXT,purchase_price TEXT NOT NULL,estimated_value TEXT NOT NULL,storage_location TEXT,notes TEXT,
       updated_at TEXT NOT NULL,FOREIGN KEY(coin_id) REFERENCES coins(id))""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS audit_logs (
+      id TEXT PRIMARY KEY, event_type TEXT NOT NULL, summary TEXT NOT NULL,
+      details TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS deleted_records (
+      table_name TEXT NOT NULL, record_key TEXT NOT NULL, deleted_at TEXT NOT NULL,
+      PRIMARY KEY(table_name,record_key))""")
     return conn
+
+
+def audit(conn, event_type, summary, details=None, now=None):
+    now = now or datetime.now().isoformat(timespec="seconds")
+    event_id = hashlib.sha256((now + event_type + summary).encode()).hexdigest()[:24]
+    conn.execute("INSERT INTO audit_logs VALUES(?,?,?,?,?)",
+                 (event_id, event_type, summary, json.dumps(details or {}, ensure_ascii=False), now))
 
 
 def money(value):
@@ -262,6 +275,14 @@ class Handler(SimpleHTTPRequestHandler):
                 "profit": str(total-total_cost), "snapshots": snapshots,
                 "coins": {"quantity": coin_row[0], "value": str(coin_row[1])}})
             return
+        if self.path == "/api/manage":
+            with db() as conn:
+                counts = {"accounts": conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0],
+                          "holdings": conn.execute("SELECT COUNT(*) FROM holdings WHERE archived_at IS NULL").fetchone()[0],
+                          "archived": conn.execute("SELECT COUNT(*) FROM holdings WHERE archived_at IS NOT NULL").fetchone()[0],
+                          "snapshots": conn.execute("SELECT COUNT(*) FROM holding_snapshots").fetchone()[0]}
+                logs = [dict(r) for r in conn.execute("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 100")]
+            self.json_response({"counts": counts, "auditLogs": logs}); return
         if self.path == "/api/health":
             with db() as conn:
                 rows = [dict(r) for r in conn.execute("SELECT * FROM health_daily ORDER BY day DESC LIMIT 90")]
@@ -277,6 +298,8 @@ class Handler(SimpleHTTPRequestHandler):
                     "holdingSnapshots": [dict(r) for r in conn.execute("SELECT * FROM holding_snapshots ORDER BY day,holding_key")],
                     "healthDaily": [dict(r) for r in conn.execute("SELECT * FROM health_daily ORDER BY day")],
                     "portfolioSnapshots": [dict(r) for r in conn.execute("SELECT * FROM portfolio_snapshots ORDER BY day")],
+                    "auditLogs": [dict(r) for r in conn.execute("SELECT * FROM audit_logs ORDER BY created_at")],
+                    "deletedRecords": [dict(r) for r in conn.execute("SELECT * FROM deleted_records ORDER BY deleted_at")],
                 }
             data = json.dumps(payload, ensure_ascii=False, indent=2).encode()
             self.send_response(200)
@@ -317,9 +340,14 @@ class Handler(SimpleHTTPRequestHandler):
                     else:
                         conn.execute("INSERT INTO holdings(code,name,category,market_value,cost,updated_at) VALUES(?,?,?,?,?,?)", values)
                     key = item["code"] or "name:" + item["name"]
+                    conn.execute("DELETE FROM deleted_records WHERE table_name='holdings' AND record_key=?", (key,))
                     conn.execute("INSERT OR REPLACE INTO holding_snapshots VALUES(?,?,?,?,?,?,?,?,?)",
                       (datetime.now().date().isoformat(), key, item["code"] or None, item["name"], item["market_value"],
                        item["holding_profit"], item["return_rate"], "manual-verified", now))
+                    conn.execute("DELETE FROM deleted_records WHERE table_name='holding_snapshots' AND record_key=?",
+                                 (datetime.now().date().isoformat() + ":" + key,))
+                    audit(conn, "HOLDING_SNAPSHOT_SAVED", "保存基金快照：" + item["name"],
+                          {"code": item["code"], "marketValue": item["market_value"], "verified": True}, now)
                     save_asset_snapshot(conn, now)
                 self.json_response({"ok": True, "mode": "updated" if existing else "created",
                                     "verified": True, "calculated": item})
@@ -334,8 +362,46 @@ class Handler(SimpleHTTPRequestHandler):
                                                (now, now, code)).rowcount
                     else:
                         changed = conn.execute("UPDATE holdings SET archived_at=NULL,updated_at=? WHERE code=? AND archived_at IS NOT NULL", (now, code)).rowcount
+                    if changed:
+                        audit(conn, "HOLDING_ARCHIVED" if self.path.endswith("archive") else "HOLDING_RESTORED",
+                              ("归档" if self.path.endswith("archive") else "恢复") + "基金：" + code, {"code": code}, now)
                     save_asset_snapshot(conn, now)
                 if not changed: raise ValueError("未找到可操作的持仓")
+                self.json_response({"ok": True}); return
+            if self.path == "/api/holdings/history/delete":
+                raw = self.read_json(); code = re.sub(r"\D", "", str(raw.get("code", "")))[:6]
+                day = str(raw.get("day", ""))
+                if len(code) != 6 or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day): raise ValueError("历史记录参数不正确")
+                now = datetime.now().isoformat(timespec="seconds")
+                with db() as conn:
+                    old = conn.execute("SELECT * FROM holding_snapshots WHERE holding_key=? AND day=?", (code, day)).fetchone()
+                    if not old: raise ValueError("历史记录不存在")
+                    conn.execute("DELETE FROM holding_snapshots WHERE holding_key=? AND day=?", (code, day))
+                    conn.execute("INSERT OR REPLACE INTO deleted_records VALUES('holding_snapshots',?,?)", (day + ":" + code, now))
+                    latest = conn.execute("SELECT * FROM holding_snapshots WHERE holding_key=? ORDER BY day DESC LIMIT 1", (code,)).fetchone()
+                    if latest:
+                        cost = money(Decimal(latest["market_value"]) - Decimal(latest["holding_profit"]))
+                        conn.execute("UPDATE holdings SET market_value=?,cost=?,updated_at=? WHERE code=?",
+                                     (latest["market_value"], cost, now, code))
+                    else:
+                        conn.execute("UPDATE holdings SET archived_at=?,updated_at=? WHERE code=?", (now, now, code))
+                    audit(conn, "HOLDING_SNAPSHOT_DELETED", "删除基金历史快照：" + old["name"],
+                          {"code": code, "day": day, "previous": dict(old)}, now)
+                    save_asset_snapshot(conn, now)
+                self.json_response({"ok": True, "recalculated": bool(latest)}); return
+            if self.path == "/api/holdings/delete":
+                code = re.sub(r"\D", "", str(self.read_json().get("code", "")))[:6]
+                if len(code) != 6: raise ValueError("基金代码不正确")
+                now = datetime.now().isoformat(timespec="seconds")
+                with db() as conn:
+                    row = conn.execute("SELECT * FROM holdings WHERE code=?", (code,)).fetchone()
+                    if not row: raise ValueError("基金不存在")
+                    count = conn.execute("SELECT COUNT(*) FROM holding_snapshots WHERE holding_key=?", (code,)).fetchone()[0]
+                    if count: raise ValueError("该基金仍有历史快照，只能归档；删除全部快照后才能彻底删除")
+                    conn.execute("DELETE FROM holdings WHERE code=?", (code,))
+                    conn.execute("INSERT OR REPLACE INTO deleted_records VALUES('holdings',?,?)", (code, now))
+                    audit(conn, "HOLDING_DELETED", "彻底删除空基金：" + row["name"], {"code": code}, now)
+                    save_asset_snapshot(conn, now)
                 self.json_response({"ok": True}); return
             if self.path == "/api/accounts":
                 item = clean_account(self.read_json())

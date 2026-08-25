@@ -59,6 +59,12 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(len(merged["tables"]["holding_snapshots"]), 1)
         self.assertEqual(merged["tables"]["holding_snapshots"][0]["market_value"], "1100")
 
+    def test_deleted_snapshot_tombstone_is_synchronized(self):
+        local={"updatedAt":"2","tables":{"deleted_records":[
+          {"table_name":"holding_snapshots","record_key":"2026-08-25:050025","deleted_at":"2"}]}}
+        merged=sync.merge_vaults(local,{"updatedAt":"1","tables":{}})
+        self.assertEqual(merged["tables"]["deleted_records"][0]["record_key"], "2026-08-25:050025")
+
     def test_github_sync_uses_bundled_ca_certificates(self):
         vault = sync.GitHubVault("owner/repo", "token")
         response = mock.MagicMock()
