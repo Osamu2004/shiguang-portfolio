@@ -68,7 +68,7 @@ def export_data(db_path):
     conn = sqlite3.connect(str(db_path)); conn.row_factory = sqlite3.Row
     try:
         tables = {}
-        for name in ("accounts", "holdings", "holding_snapshots", "health_daily", "portfolio_snapshots", "coins", "coin_collection", "graded_coins", "audit_logs", "deleted_records"):
+        for name in ("accounts", "holdings", "holding_snapshots", "health_daily", "portfolio_snapshots", "coins", "coin_collection", "graded_coins", "scholar_profiles", "scholar_snapshots", "scholar_papers", "scholar_paper_snapshots", "audit_logs", "deleted_records"):
             exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
             tables[name] = [dict(r) for r in conn.execute("SELECT * FROM " + name)] if exists else []
         return {"schemaVersion": 1, "updatedAt": datetime.now(timezone.utc).isoformat(), "tables": tables}
@@ -81,6 +81,10 @@ def _record_key(table, row):
         return str(row["day"])
     if table == "holding_snapshots": return str(row["day"]) + ":" + str(row["holding_key"])
     if table in ("coins", "graded_coins"): return str(row["id"])
+    if table == "scholar_profiles": return str(row["profile_id"])
+    if table == "scholar_snapshots": return str(row["profile_id"])+":"+str(row["day"])
+    if table == "scholar_papers": return str(row["profile_id"])+":"+str(row["paper_id"])
+    if table == "scholar_paper_snapshots": return str(row["profile_id"])+":"+str(row["paper_id"])+":"+str(row["day"])
     if table == "coin_collection": return str(row["coin_id"])
     if table == "audit_logs": return str(row["id"])
     if table == "deleted_records": return str(row["table_name"]) + ":" + str(row["record_key"])
@@ -91,7 +95,7 @@ def merge_vaults(local, remote):
     if not remote:
         return local
     result = {"schemaVersion": 1, "updatedAt": max(local.get("updatedAt", ""), remote.get("updatedAt", "")), "tables": {}}
-    for table in ("accounts", "holdings", "holding_snapshots", "health_daily", "portfolio_snapshots", "coins", "coin_collection", "graded_coins", "audit_logs", "deleted_records"):
+    for table in ("accounts", "holdings", "holding_snapshots", "health_daily", "portfolio_snapshots", "coins", "coin_collection", "graded_coins", "scholar_profiles", "scholar_snapshots", "scholar_papers", "scholar_paper_snapshots", "audit_logs", "deleted_records"):
         merged = {}
         for source in (remote, local):
             for row in source.get("tables", {}).get(table, []):
@@ -140,6 +144,14 @@ def import_data(db_path, payload):
         for row in payload["tables"].get("graded_coins", []):
             conn.execute("INSERT OR REPLACE INTO graded_coins VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", tuple(row.get(k) for k in
               ("id","grading_company","certificate_no","coin_name","issue_year","grade","label_type","purchase_price","estimated_value","storage_location","notes","updated_at")))
+        for row in payload["tables"].get("scholar_profiles", []):
+            conn.execute("INSERT OR REPLACE INTO scholar_profiles VALUES(?,?,?,?,?,?)",tuple(row.get(k) for k in ("profile_id","name","affiliation","interests","profile_url","updated_at")))
+        for row in payload["tables"].get("scholar_snapshots", []):
+            conn.execute("INSERT OR REPLACE INTO scholar_snapshots VALUES(?,?,?,?,?,?,?,?,?,?)",tuple(row.get(k) for k in ("profile_id","day","citations_all","citations_recent","h_index_all","h_index_recent","i10_all","i10_recent","yearly_citations","captured_at")))
+        for row in payload["tables"].get("scholar_papers", []):
+            conn.execute("INSERT OR REPLACE INTO scholar_papers VALUES(?,?,?,?,?,?,?,?)",tuple(row.get(k) for k in ("profile_id","paper_id","title","authors","venue","publication_year","url","updated_at")))
+        for row in payload["tables"].get("scholar_paper_snapshots", []):
+            conn.execute("INSERT OR REPLACE INTO scholar_paper_snapshots VALUES(?,?,?,?,?)",tuple(row.get(k) for k in ("profile_id","paper_id","day","citations","captured_at")))
         for row in payload["tables"].get("audit_logs", []):
             conn.execute("INSERT OR IGNORE INTO audit_logs VALUES(?,?,?,?,?)", tuple(row.get(k) for k in
               ("id","event_type","summary","details","created_at")))

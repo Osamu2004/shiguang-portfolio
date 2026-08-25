@@ -15,6 +15,7 @@ import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -90,6 +91,18 @@ def db():
       coin_name TEXT NOT NULL, issue_year INTEGER, grade TEXT NOT NULL, label_type TEXT,
       purchase_price TEXT NOT NULL DEFAULT '0', estimated_value TEXT NOT NULL DEFAULT '0',
       storage_location TEXT, notes TEXT, updated_at TEXT NOT NULL)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS scholar_profiles (
+      profile_id TEXT PRIMARY KEY,name TEXT NOT NULL,affiliation TEXT,interests TEXT,profile_url TEXT,updated_at TEXT NOT NULL)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS scholar_snapshots (
+      profile_id TEXT NOT NULL,day TEXT NOT NULL,citations_all INTEGER NOT NULL,citations_recent INTEGER,
+      h_index_all INTEGER NOT NULL,h_index_recent INTEGER,i10_all INTEGER NOT NULL,i10_recent INTEGER,
+      yearly_citations TEXT NOT NULL DEFAULT '{}',captured_at TEXT NOT NULL,PRIMARY KEY(profile_id,day))""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS scholar_papers (
+      profile_id TEXT NOT NULL,paper_id TEXT NOT NULL,title TEXT NOT NULL,authors TEXT,venue TEXT,
+      publication_year INTEGER,url TEXT,updated_at TEXT NOT NULL,PRIMARY KEY(profile_id,paper_id))""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS scholar_paper_snapshots (
+      profile_id TEXT NOT NULL,paper_id TEXT NOT NULL,day TEXT NOT NULL,citations INTEGER NOT NULL,
+      captured_at TEXT NOT NULL,PRIMARY KEY(profile_id,paper_id,day))""")
     conn.execute("""CREATE TABLE IF NOT EXISTS audit_logs (
       id TEXT PRIMARY KEY, event_type TEXT NOT NULL, summary TEXT NOT NULL,
       details TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL)""")
@@ -335,6 +348,22 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == "/api/graded-coins":
             with db() as conn: rows = [dict(r) for r in conn.execute("SELECT * FROM graded_coins ORDER BY issue_year DESC,updated_at DESC")]
             self.json_response({"coins": rows}); return
+        if self.path == "/api/scholar":
+            with db() as conn:
+                profile = conn.execute("SELECT * FROM scholar_profiles ORDER BY updated_at DESC LIMIT 1").fetchone()
+                if not profile: self.json_response({"profile":None,"snapshots":[],"papers":[]}); return
+                pid=profile["profile_id"]
+                snapshots=[dict(r) for r in conn.execute("SELECT * FROM scholar_snapshots WHERE profile_id=? ORDER BY day",(pid,))]
+                papers=[dict(r) for r in conn.execute("""SELECT p.*,(SELECT citations FROM scholar_paper_snapshots s WHERE s.profile_id=p.profile_id AND s.paper_id=p.paper_id ORDER BY day DESC LIMIT 1) citations FROM scholar_papers p WHERE profile_id=? ORDER BY citations DESC,publication_year DESC""",(pid,))]
+            self.json_response({"profile":dict(profile),"snapshots":snapshots,"papers":papers}); return
+        if self.path == "/api/scholar-extension":
+            source=RESOURCES / "scholar-extension"; buffer=io.BytesIO()
+            with zipfile.ZipFile(buffer,"w",zipfile.ZIP_DEFLATED) as archive:
+                for path in source.rglob("*"):
+                    if path.is_file(): archive.write(path,path.relative_to(source.parent))
+            data=buffer.getvalue(); self.send_response(200); self.send_header("Content-Type","application/zip")
+            self.send_header("Content-Disposition",'attachment; filename="Shiguang-Scholar-Extension.zip"')
+            self.send_header("Content-Length",str(len(data))); self.end_headers(); self.wfile.write(data); return
         if self.path == "/api/update/check":
             try:
                 from updater import check
@@ -495,6 +524,25 @@ class Handler(SimpleHTTPRequestHandler):
                        str(raw.get("label_type", ""))[:40],money(raw.get("purchase_price",0)),money(raw.get("estimated_value",0)),
                        str(raw.get("storage_location", ""))[:80],str(raw.get("notes", ""))[:500],now))
                 self.json_response({"ok":True,"id":item_id}); return
+            if self.path == "/api/scholar/import":
+                raw=self.read_json(); profile=raw.get("profile") or {}; metrics=profile.get("metrics") or {}
+                pid=str(profile.get("id","")).strip()[:80]; name=str(profile.get("name","")).strip()[:120]
+                if not pid or not name: raise ValueError("科研快照缺少个人主页 ID 或姓名")
+                captured=str(raw.get("capturedAt") or datetime.now().isoformat(timespec="seconds")); day=captured[:10]
+                def whole(v):
+                    try: return max(0,int(v or 0))
+                    except (TypeError,ValueError): raise ValueError("引用指标格式不正确")
+                papers=raw.get("papers") or []; now=datetime.now().isoformat(timespec="seconds")
+                with db() as conn:
+                    conn.execute("INSERT OR REPLACE INTO scholar_profiles VALUES(?,?,?,?,?,?)",(pid,name,str(profile.get("affiliation", ""))[:200],json.dumps(profile.get("interests") or [],ensure_ascii=False),str(profile.get("url", ""))[:500],now))
+                    conn.execute("INSERT OR REPLACE INTO scholar_snapshots VALUES(?,?,?,?,?,?,?,?,?,?)",(pid,day,whole(metrics.get("citationsAll")),whole(metrics.get("citationsRecent")),whole(metrics.get("hIndexAll")),whole(metrics.get("hIndexRecent")),whole(metrics.get("i10All")),whole(metrics.get("i10Recent")),json.dumps(profile.get("yearlyCitations") or {},ensure_ascii=False),captured))
+                    for p in papers[:2000]:
+                        title=str(p.get("title","")).strip()[:500]
+                        if not title: continue
+                        paper_id=str(p.get("id") or hashlib.sha256(title.encode()).hexdigest()[:24])[:120]
+                        conn.execute("INSERT OR REPLACE INTO scholar_papers VALUES(?,?,?,?,?,?,?,?)",(pid,paper_id,title,str(p.get("authors", ""))[:1000],str(p.get("venue", ""))[:500],whole(p.get("year")) or None,str(p.get("url", ""))[:1000],now))
+                        conn.execute("INSERT OR REPLACE INTO scholar_paper_snapshots VALUES(?,?,?,?,?)",(pid,paper_id,day,whole(p.get("citations")),captured))
+                self.json_response({"ok":True,"papers":len(papers),"day":day}); return
             if self.path == "/api/update/install":
                 from updater import stage_and_install
                 result = stage_and_install(); self.json_response(result)
