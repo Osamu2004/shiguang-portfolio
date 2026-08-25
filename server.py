@@ -16,6 +16,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import zipfile
+import concurrent.futures
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -233,7 +234,7 @@ def lookup_fund(code):
             "fundType": fund_type, "category": category}
 
 
-def fetch_fund_market(code, page_size=90):
+def fetch_fund_market(code, page_size=1200):
     code = re.sub(r"\D", "", str(code))[:6]
     if len(code) != 6:
         raise ValueError("请输入 6 位基金代码")
@@ -360,7 +361,7 @@ class Handler(SimpleHTTPRequestHandler):
                     market=conn.execute("SELECT day,unit_nav,cumulative_nav,daily_change_pct FROM fund_market_daily WHERE code=? ORDER BY day DESC LIMIT 1",(row.get("code"),)).fetchone()
                     market_data=dict(market) if market else None
                     if market_data: row["public_market"]=market_data
-                    history=[dict(x) for x in conn.execute("SELECT day,unit_nav,daily_change_pct FROM fund_market_daily WHERE code=? ORDER BY day DESC LIMIT 30",(row.get("code"),))]
+                    history=[dict(x) for x in conn.execute("SELECT day,unit_nav,daily_change_pct FROM fund_market_daily WHERE code=? ORDER BY day DESC LIMIT 1200",(row.get("code"),))]
                     row["public_market_history"]=list(reversed(history))
                     strategy=conn.execute("SELECT * FROM fund_strategies WHERE code=?",(row.get("code"),)).fetchone()
                     row["investment_strategy"]=dict(strategy) if strategy else {"mode":"none","daily_amount":"0","per_drop_pct_amount":"0","max_daily_amount":"0"}
@@ -497,15 +498,18 @@ class Handler(SimpleHTTPRequestHandler):
                 with db() as conn:
                     codes=[requested] if len(requested)==6 else [r[0] for r in conn.execute(
                       "SELECT DISTINCT code FROM holdings WHERE archived_at IS NULL AND length(code)=6")]
-                updated=0; errors={}; now=datetime.now().isoformat(timespec="seconds")
-                for code in codes:
-                    try:
-                        rows=fetch_fund_market(code)
-                        with db() as conn:
-                            for row in rows: conn.execute("INSERT OR REPLACE INTO fund_market_daily VALUES(?,?,?,?,?,?,?)",
-                              (row["code"],row["day"],row["unit_nav"],row["cumulative_nav"],row["daily_change_pct"],row["source"],now))
-                        updated+=1
-                    except ValueError as exc: errors[code]=str(exc)
+                updated=0; errors={}; now=datetime.now().isoformat(timespec="seconds"); page_size=1200 if raw.get("full_history") else 120
+                with concurrent.futures.ThreadPoolExecutor(max_workers=min(4,max(1,len(codes)))) as pool:
+                    futures={pool.submit(fetch_fund_market,code,page_size):code for code in codes}
+                    for future in concurrent.futures.as_completed(futures):
+                        code=futures[future]
+                        try:
+                            market_rows=future.result()
+                            with db() as conn:
+                                for row in market_rows: conn.execute("INSERT OR REPLACE INTO fund_market_daily VALUES(?,?,?,?,?,?,?)",
+                                  (row["code"],row["day"],row["unit_nav"],row["cumulative_nav"],row["daily_change_pct"],row["source"],now))
+                            updated+=1
+                        except Exception as exc: errors[code]=str(exc) if isinstance(exc,ValueError) else "公开行情读取失败"
                 self.json_response({"ok":True,"updated":updated,"errors":errors}); return
             if self.path == "/api/funds/strategy":
                 raw=self.read_json(); code=re.sub(r"\D", "", str(raw.get("code", "")))[:6]
