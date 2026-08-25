@@ -8,9 +8,10 @@
   <link rel="stylesheet" href="/checkup.css">
   <link rel="stylesheet" href="/accounts.css">
 </head><body>
-<header><a class="brand" href="#"><span class="seal">拾</span><span>拾光账册<small>PERSONAL PORTFOLIO · № 01</small></span></a><div class="header-actions"><span class="period">个人账户 · LOCAL</span><button class="privacy" id="privacy">隐藏金额</button><span class="avatar">我</span></div></header>
+<header><a class="brand" href="#"><span class="seal">拾</span><span>拾光账册<small>PERSONAL PORTFOLIO · № 01</small></span></a><div class="header-actions"><span class="period">个人账户 · LOCAL</span><button class="privacy" id="privacy">隐藏金额</button><button class="avatar" id="userMenuButton" aria-expanded="false" aria-controls="userMenu">我</button></div></header>
+<div class="user-menu" id="userMenu" hidden><div class="user-menu-head"><span class="avatar">我</span><div><b>我的拾光</b><small>本机个人账户</small></div></div><nav><button data-page="advice"><span>配置体检</span><small>资产配置与风险报告</small></button><button data-page="manage"><span>数据管理</span><small>历史、归档、备份与审计</small></button><button data-page="sync"><span>数据同步</span><small>GitHub 加密同步与软件更新</small></button></nav></div>
 <div class="shell">
-  <aside><nav><button class="active" data-page="dashboard">仪表盘</button><button data-page="holdings">资产账户</button><button data-page="health">健康记录</button><button data-page="coins">纪念币</button><button data-page="sync">数据同步</button><button data-page="advice">配置体检</button><button data-page="manage">数据管理</button></nav><div class="aside-note">数据仅存于你的设备 · <a href="/api/export">导出账册</a></div></aside>
+  <aside><nav><button class="active" data-page="dashboard">仪表盘</button><button data-page="holdings">资产账户</button><button data-page="health">健康记录</button><button data-page="coins">纪念币</button></nav><div class="aside-note">数据仅存于你的设备 · <a href="/api/export">导出账册</a></div></aside>
   <main>
     <section class="page active" id="dashboard">
       <div class="eyebrow">个 · 人 · 资 · 产 · 总 · 览</div><h1>个人资产 · 实时汇总</h1><p class="page-note">现金、银行卡、支付宝、微信与投资持仓，全部按本机最新账本计算。</p>
