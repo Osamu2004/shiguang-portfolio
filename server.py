@@ -89,12 +89,18 @@ def db():
       code TEXT PRIMARY KEY,mode TEXT NOT NULL DEFAULT 'none',daily_amount TEXT NOT NULL DEFAULT '0',
       per_drop_pct_amount TEXT NOT NULL DEFAULT '0',max_daily_amount TEXT NOT NULL DEFAULT '0',
       drawdown_budget TEXT NOT NULL DEFAULT '0',executed_drawdown_stage INTEGER NOT NULL DEFAULT 0,
+      drawdown_thresholds TEXT NOT NULL DEFAULT '10,20,35,50',
+      drawdown_allocations TEXT NOT NULL DEFAULT '20,20,30,30',
       updated_at TEXT NOT NULL)""")
     strategy_columns = {row[1] for row in conn.execute("PRAGMA table_info(fund_strategies)")}
     if "drawdown_budget" not in strategy_columns:
         conn.execute("ALTER TABLE fund_strategies ADD COLUMN drawdown_budget TEXT NOT NULL DEFAULT '0'")
     if "executed_drawdown_stage" not in strategy_columns:
         conn.execute("ALTER TABLE fund_strategies ADD COLUMN executed_drawdown_stage INTEGER NOT NULL DEFAULT 0")
+    if "drawdown_thresholds" not in strategy_columns:
+        conn.execute("ALTER TABLE fund_strategies ADD COLUMN drawdown_thresholds TEXT NOT NULL DEFAULT '10,20,35,50'")
+    if "drawdown_allocations" not in strategy_columns:
+        conn.execute("ALTER TABLE fund_strategies ADD COLUMN drawdown_allocations TEXT NOT NULL DEFAULT '20,20,30,30'")
     conn.execute("""CREATE TABLE IF NOT EXISTS user_preferences (
       id INTEGER PRIMARY KEY CHECK(id=1),show_health INTEGER NOT NULL DEFAULT 0,
       show_coins INTEGER NOT NULL DEFAULT 0,show_research INTEGER NOT NULL DEFAULT 0,
@@ -273,6 +279,22 @@ def fetch_fund_market(code, page_size=1200):
     return rows
 
 
+def drawdown_rules(strategy):
+    def parse(name, default):
+        raw=str((strategy or {}).get(name,default))
+        try: values=tuple(Decimal(part.strip()) for part in raw.split(","))
+        except InvalidOperation: raise ValueError("回撤档位必须是数字")
+        if len(values)!=4: raise ValueError("回撤策略必须设置 4 个档位")
+        return values
+    thresholds=parse("drawdown_thresholds","10,20,35,50")
+    allocations=parse("drawdown_allocations","20,20,30,30")
+    if any(x<=0 or x>100 for x in thresholds) or any(a>=b for a,b in zip(thresholds,thresholds[1:])):
+        raise ValueError("回撤阈值必须大于 0、不超过 100，并且逐档递增")
+    if any(x<0 for x in allocations) or sum(allocations)!=Decimal("100"):
+        raise ValueError("四档资金比例必须为非负数，且合计等于 100%")
+    return thresholds,allocations
+
+
 def drawdown_status(strategy, market, history=None):
     values=[]
     for row in history or []:
@@ -283,7 +305,7 @@ def drawdown_status(strategy, market, history=None):
     if current > 0: values.append(current)
     if not values or current <= 0: return {"highest_nav":None,"drawdown_pct":None,"triggered_stage":0}
     highest=max(values); drawdown=max(Decimal("0"),(highest-current)/highest*100)
-    thresholds=(Decimal("10"),Decimal("20"),Decimal("35"),Decimal("50"))
+    thresholds,_=drawdown_rules(strategy)
     stage=sum(1 for threshold in thresholds if drawdown >= threshold)
     return {"highest_nav":str(highest),"drawdown_pct":str(drawdown.quantize(Decimal("0.01"))),"triggered_stage":stage}
 
@@ -295,7 +317,7 @@ def planned_investment(strategy, market, history=None):
         status=drawdown_status(strategy,market,history); stage=status["triggered_stage"]
         executed=max(0,min(4,int(strategy.get("executed_drawdown_stage",0))))
         if stage <= executed: return Decimal("0")
-        weights=(Decimal("0.20"),Decimal("0.20"),Decimal("0.30"),Decimal("0.30"))
+        _,allocations=drawdown_rules(strategy); weights=tuple(x/100 for x in allocations)
         return Decimal(strategy["drawdown_budget"])*sum(weights[executed:stage])
     change=Decimal(str((market or {}).get("daily_change_pct", "0")))
     if change >= 0: return Decimal("0")
@@ -398,7 +420,7 @@ class Handler(SimpleHTTPRequestHandler):
                     history=[dict(x) for x in conn.execute("SELECT day,unit_nav,daily_change_pct FROM fund_market_daily WHERE code=? ORDER BY day DESC LIMIT 10000",(row.get("code"),))]
                     row["public_market_history"]=list(reversed(history))
                     strategy=conn.execute("SELECT * FROM fund_strategies WHERE code=?",(row.get("code"),)).fetchone()
-                    row["investment_strategy"]=dict(strategy) if strategy else {"mode":"none","daily_amount":"0","per_drop_pct_amount":"0","max_daily_amount":"0","drawdown_budget":"0","executed_drawdown_stage":0}
+                    row["investment_strategy"]=dict(strategy) if strategy else {"mode":"none","daily_amount":"0","per_drop_pct_amount":"0","max_daily_amount":"0","drawdown_budget":"0","executed_drawdown_stage":0,"drawdown_thresholds":"10,20,35,50","drawdown_allocations":"20,20,30,30"}
                     row["drawdown_status"]=drawdown_status(row["investment_strategy"],market_data,history)
                     row["planned_investment"]=str(planned_investment(row["investment_strategy"],market_data,history).quantize(Decimal("0.01")))
             total = sum(Decimal(r["market_value"]) for r in rows)
@@ -553,18 +575,21 @@ class Handler(SimpleHTTPRequestHandler):
                 if len(code)!=6: raise ValueError("基金代码不正确")
                 if mode not in ("none","daily","drop","drawdown"): raise ValueError("定投策略不正确")
                 daily=money(raw.get("daily_amount",0)); per_pct=money(raw.get("per_drop_pct_amount",0)); cap=money(raw.get("max_daily_amount",0)); budget=money(raw.get("drawdown_budget",0))
+                thresholds=",".join(str(raw.get("drawdown_threshold_"+str(i),default)).strip() for i,default in enumerate((10,20,35,50),1))
+                allocations=",".join(str(raw.get("drawdown_allocation_"+str(i),default)).strip() for i,default in enumerate((20,20,30,30),1))
                 try: executed=int(raw.get("executed_drawdown_stage",0))
                 except (TypeError,ValueError): raise ValueError("已执行档位不正确")
                 if executed not in range(5): raise ValueError("已执行档位不正确")
                 if mode=="daily" and Decimal(daily)<=0: raise ValueError("每日定投金额必须大于 0")
                 if mode=="drop" and Decimal(per_pct)<=0: raise ValueError("每下跌 1% 的定投金额必须大于 0")
                 if mode=="drawdown" and Decimal(budget)<=0: raise ValueError("回撤资金总额必须大于 0")
+                if mode=="drawdown": drawdown_rules({"drawdown_thresholds":thresholds,"drawdown_allocations":allocations})
                 now=datetime.now().isoformat(timespec="seconds")
                 with db() as conn:
                     if not conn.execute("SELECT 1 FROM holdings WHERE code=?",(code,)).fetchone(): raise ValueError("未找到该基金")
                     conn.execute("""INSERT OR REPLACE INTO fund_strategies
-                      (code,mode,daily_amount,per_drop_pct_amount,max_daily_amount,drawdown_budget,executed_drawdown_stage,updated_at)
-                      VALUES(?,?,?,?,?,?,?,?)""",(code,mode,daily,per_pct,cap,budget,executed,now))
+                      (code,mode,daily_amount,per_drop_pct_amount,max_daily_amount,drawdown_budget,executed_drawdown_stage,drawdown_thresholds,drawdown_allocations,updated_at)
+                      VALUES(?,?,?,?,?,?,?,?,?,?)""",(code,mode,daily,per_pct,cap,budget,executed,thresholds,allocations,now))
                     audit(conn,"FUND_STRATEGY_SAVED","保存基金定投策略："+code,{"mode":mode},now)
                 self.json_response({"ok":True}); return
             if self.path == "/api/preferences":

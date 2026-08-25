@@ -105,6 +105,16 @@ class CoreTest(unittest.TestCase):
         history=[{"unit_nav":"2.00"},{"unit_nav":"1.60"}]
         self.assertEqual(app.planned_investment(strategy,{"unit_nav":"1.60"},history),0)
 
+    def test_drawdown_strategy_accepts_custom_thresholds_and_allocations(self):
+        strategy={"mode":"drawdown","drawdown_budget":"1000","executed_drawdown_stage":0,
+                  "drawdown_thresholds":"5,15,25,40","drawdown_allocations":"10,20,30,40"}
+        history=[{"unit_nav":"2.00"}]
+        self.assertEqual(app.planned_investment(strategy,{"unit_nav":"1.60"},history),300)
+
+    def test_drawdown_allocations_must_total_one_hundred_percent(self):
+        with self.assertRaisesRegex(ValueError,"100%"):
+            app.drawdown_rules({"drawdown_thresholds":"10,20,35,50","drawdown_allocations":"20,20,20,20"})
+
     def test_all_three_platform_fields_are_required(self):
         with self.assertRaisesRegex(ValueError, "原样填写"):
             app.clean_item({"name": "ETF", "market_value": "1100", "return_rate": "10%"})

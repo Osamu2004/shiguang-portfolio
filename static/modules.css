@@ -57,6 +57,21 @@
 }
 .strategy-panel[hidden] { display: none; }
 .strategy-panel .card-head h2 { margin: 0; font-size: 19px; }
+.drawdown-rules {
+  display: grid;
+  grid-template-columns: 58px 1fr 1fr;
+  gap: 7px 9px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--rule-soft);
+  background: var(--paper-soft);
+}
+.drawdown-rules > b { grid-column: 1 / -1; font-size: 12px; }
+.drawdown-rules > span { color: var(--ink-subtle); font-size: 10px; text-align: center; }
+.drawdown-rules > span:first-of-type { grid-column: 2; }
+.drawdown-rules em { font-style: normal; font-size: 10px; color: var(--ink-subtle); }
+.drawdown-rules label { display: flex; align-items: center; gap: 3px; }
+.drawdown-rules input { margin: 0; padding: 7px; text-align: right; }
 
 .fund-sparkline,
 .fund-sparkline svg { width: 150px; }
