@@ -84,6 +84,10 @@ def db():
       code TEXT NOT NULL,day TEXT NOT NULL,unit_nav TEXT NOT NULL,cumulative_nav TEXT,
       daily_change_pct TEXT NOT NULL,source TEXT NOT NULL,fetched_at TEXT NOT NULL,
       PRIMARY KEY(code,day))""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS fund_strategies (
+      code TEXT PRIMARY KEY,mode TEXT NOT NULL DEFAULT 'none',daily_amount TEXT NOT NULL DEFAULT '0',
+      per_drop_pct_amount TEXT NOT NULL DEFAULT '0',max_daily_amount TEXT NOT NULL DEFAULT '0',
+      updated_at TEXT NOT NULL)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS coins (id TEXT PRIMARY KEY,name TEXT NOT NULL,series TEXT,
       issue_year INTEGER,face_value TEXT NOT NULL DEFAULT '0',material TEXT,image_path TEXT,
       image_source TEXT,image_license TEXT,updated_at TEXT NOT NULL)""")
@@ -258,6 +262,16 @@ def fetch_fund_market(code, page_size=90):
     return rows
 
 
+def planned_investment(strategy, market):
+    if not strategy or strategy["mode"] == "none": return Decimal("0")
+    if strategy["mode"] == "daily": return Decimal(strategy["daily_amount"])
+    change=Decimal(str((market or {}).get("daily_change_pct", "0")))
+    if change >= 0: return Decimal("0")
+    amount=(-change)*Decimal(strategy["per_drop_pct_amount"])
+    cap=Decimal(strategy["max_daily_amount"])
+    return min(amount,cap) if cap > 0 else amount
+
+
 def clean_account(raw):
     name = str(raw.get("name", "")).strip()[:80]
     if not name:
@@ -344,9 +358,13 @@ class Handler(SimpleHTTPRequestHandler):
                 coin_row = conn.execute("SELECT COALESCE(SUM(quantity),0),COALESCE(SUM(estimated_value + 0),0) FROM coin_collection").fetchone()
                 for row in rows:
                     market=conn.execute("SELECT day,unit_nav,cumulative_nav,daily_change_pct FROM fund_market_daily WHERE code=? ORDER BY day DESC LIMIT 1",(row.get("code"),)).fetchone()
-                    if market: row["public_market"]=dict(market)
+                    market_data=dict(market) if market else None
+                    if market_data: row["public_market"]=market_data
                     history=[dict(x) for x in conn.execute("SELECT day,unit_nav,daily_change_pct FROM fund_market_daily WHERE code=? ORDER BY day DESC LIMIT 30",(row.get("code"),))]
                     row["public_market_history"]=list(reversed(history))
+                    strategy=conn.execute("SELECT * FROM fund_strategies WHERE code=?",(row.get("code"),)).fetchone()
+                    row["investment_strategy"]=dict(strategy) if strategy else {"mode":"none","daily_amount":"0","per_drop_pct_amount":"0","max_daily_amount":"0"}
+                    row["planned_investment"]=str(planned_investment(row["investment_strategy"],market_data).quantize(Decimal("0.01")))
             total = sum(Decimal(r["market_value"]) for r in rows)
             account_total = sum(Decimal(r["balance"]) for r in accounts)
             total_cost = sum(Decimal(r["cost"]) for r in rows)
@@ -378,6 +396,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "holdings": [dict(r) for r in conn.execute("SELECT * FROM holdings ORDER BY id")],
                     "holdingSnapshots": [dict(r) for r in conn.execute("SELECT * FROM holding_snapshots ORDER BY day,holding_key")],
                     "fundMarketDaily": [dict(r) for r in conn.execute("SELECT * FROM fund_market_daily ORDER BY day,code")],
+                    "fundStrategies": [dict(r) for r in conn.execute("SELECT * FROM fund_strategies ORDER BY code")],
                     "healthDaily": [dict(r) for r in conn.execute("SELECT * FROM health_daily ORDER BY day")],
                     "portfolioSnapshots": [dict(r) for r in conn.execute("SELECT * FROM portfolio_snapshots ORDER BY day")],
                     "auditLogs": [dict(r) for r in conn.execute("SELECT * FROM audit_logs ORDER BY created_at")],
@@ -488,6 +507,20 @@ class Handler(SimpleHTTPRequestHandler):
                         updated+=1
                     except ValueError as exc: errors[code]=str(exc)
                 self.json_response({"ok":True,"updated":updated,"errors":errors}); return
+            if self.path == "/api/funds/strategy":
+                raw=self.read_json(); code=re.sub(r"\D", "", str(raw.get("code", "")))[:6]
+                mode=str(raw.get("mode", "none"));
+                if len(code)!=6: raise ValueError("基金代码不正确")
+                if mode not in ("none","daily","drop"): raise ValueError("定投策略不正确")
+                daily=money(raw.get("daily_amount",0)); per_pct=money(raw.get("per_drop_pct_amount",0)); cap=money(raw.get("max_daily_amount",0))
+                if mode=="daily" and Decimal(daily)<=0: raise ValueError("每日定投金额必须大于 0")
+                if mode=="drop" and Decimal(per_pct)<=0: raise ValueError("每下跌 1% 的定投金额必须大于 0")
+                now=datetime.now().isoformat(timespec="seconds")
+                with db() as conn:
+                    if not conn.execute("SELECT 1 FROM holdings WHERE code=?",(code,)).fetchone(): raise ValueError("未找到该基金")
+                    conn.execute("INSERT OR REPLACE INTO fund_strategies VALUES(?,?,?,?,?,?)",(code,mode,daily,per_pct,cap,now))
+                    audit(conn,"FUND_STRATEGY_SAVED","保存基金定投策略："+code,{"mode":mode},now)
+                self.json_response({"ok":True}); return
             if self.path in ("/api/holdings/archive", "/api/holdings/restore"):
                 code = re.sub(r"\D", "", str(self.read_json().get("code", "")))[:6]
                 if len(code) != 6: raise ValueError("基金代码不正确")

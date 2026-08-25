@@ -71,6 +71,14 @@ class CoreTest(unittest.TestCase):
         self.assertEqual(rows[0]["daily_change_pct"], "-1.27")
         self.assertEqual(rows[0]["unit_nav"], "1.2345")
 
+    def test_fund_investment_strategy_defaults_to_no_money(self):
+        self.assertEqual(app.planned_investment(None, {"daily_change_pct":"-3"}), 0)
+
+    def test_drop_strategy_scales_with_public_daily_change_and_cap(self):
+        strategy={"mode":"drop","daily_amount":"0","per_drop_pct_amount":"100","max_daily_amount":"200"}
+        self.assertEqual(app.planned_investment(strategy,{"daily_change_pct":"-2.30"}), 200)
+        self.assertEqual(app.planned_investment(strategy,{"daily_change_pct":"1.20"}), 0)
+
     def test_all_three_platform_fields_are_required(self):
         with self.assertRaisesRegex(ValueError, "原样填写"):
             app.clean_item({"name": "ETF", "market_value": "1100", "return_rate": "10%"})
