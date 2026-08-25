@@ -24,23 +24,21 @@ class CoreTest(unittest.TestCase):
                     self.assertIn("deleted_records", tables)
                     self.assertEqual(conn.execute("SELECT name FROM holdings WHERE code='050025'").fetchone()[0], "测试基金")
 
-    def test_holding_keeps_cost_separate_from_value(self):
-        item = app.clean_item({"name": "ETF", "category": "债券基金", "cost": "1000", "market_value": "1120"})
-        self.assertEqual(item["cost"], "1000.00")
-        self.assertEqual(item["market_value"], "1120.00")
+    def test_holding_preserves_platform_values(self):
+        item = app.clean_item({"name": "ETF", "category": "债券基金", "market_value": "5981.99",
+                               "holding_profit": "-518.01", "return_rate": "-8.09%"})
+        self.assertEqual(item["holding_profit"], "-518.01")
+        self.assertEqual(item["return_rate"], "-8.09")
+        self.assertEqual(item["market_value"], "5981.99")
         self.assertEqual(item["category"], "债券基金")
 
     def test_holding_rejects_unknown_category(self):
         with self.assertRaisesRegex(ValueError, "基金类别"):
-            app.clean_item({"name": "ETF", "category": "未知", "market_value": "100"})
-
-    def test_holding_cost_is_derived_from_alipay_profit(self):
-        item = app.clean_item({"name": "ETF", "market_value": "1120", "holding_profit": "120"})
-        self.assertEqual(item["cost"], "1000.00")
+            app.clean_item({"name": "ETF", "category": "未知", "market_value": "100", "holding_profit": "0", "return_rate": "0"})
 
     def test_negative_holding_profit_is_supported(self):
-        item = app.clean_item({"name": "ETF", "market_value": "920", "holding_profit": "-80"})
-        self.assertEqual(item["cost"], "1000.00")
+        item = app.clean_item({"name": "ETF", "market_value": "920", "holding_profit": "-80", "return_rate": "-7.41"})
+        self.assertEqual(item["holding_profit"], "-80.00")
 
     def test_fund_code_lookup_returns_chinese_name(self):
         response = mock.MagicMock()
@@ -62,19 +60,13 @@ class CoreTest(unittest.TestCase):
         self.assertEqual(fund["name"], "博时标普500ETF联接A")
         opened.assert_not_called()
 
-    def test_two_of_three_alipay_fields_are_enough(self):
-        item = app.clean_item({"name": "ETF", "market_value": "1100", "return_rate": "10%"})
-        self.assertEqual(item["cost"], "1000.00")
-        self.assertEqual(item["holding_profit"], "100.00")
+    def test_all_three_platform_fields_are_required(self):
+        with self.assertRaisesRegex(ValueError, "原样填写"):
+            app.clean_item({"name": "ETF", "market_value": "1100", "return_rate": "10%"})
 
-    def test_profit_and_rate_calculate_market_value(self):
-        item = app.clean_item({"name": "ETF", "holding_profit": "100", "return_rate": "10"})
-        self.assertEqual(item["market_value"], "1100.00")
-        self.assertEqual(item["cost"], "1000.00")
-
-    def test_inconsistent_three_fields_are_rejected(self):
-        with self.assertRaisesRegex(ValueError, "不一致"):
-            app.clean_item({"name": "ETF", "market_value": "1100", "holding_profit": "100", "return_rate": "20"})
+    def test_inconsistent_platform_fields_are_still_preserved(self):
+        item = app.clean_item({"name": "ETF", "market_value": "1100", "holding_profit": "100", "return_rate": "20"})
+        self.assertEqual(item["return_rate"], "20.00")
 
     def test_consistent_rounded_rate_is_accepted(self):
         item = app.clean_item({"name": "ETF", "market_value": "1100", "holding_profit": "100", "return_rate": "10.00"})

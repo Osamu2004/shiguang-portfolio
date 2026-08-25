@@ -44,6 +44,11 @@ def db():
     holding_columns = {row[1] for row in conn.execute("PRAGMA table_info(holdings)")}
     if "archived_at" not in holding_columns:
         conn.execute("ALTER TABLE holdings ADD COLUMN archived_at TEXT")
+    if "holding_profit" not in holding_columns:
+        conn.execute("ALTER TABLE holdings ADD COLUMN holding_profit TEXT NOT NULL DEFAULT '0.00'")
+        conn.execute("UPDATE holdings SET holding_profit=printf('%.2f',(market_value + 0) - (cost + 0))")
+    if "return_rate" not in holding_columns:
+        conn.execute("ALTER TABLE holdings ADD COLUMN return_rate TEXT NOT NULL DEFAULT '0.00'")
     conn.execute("""CREATE TABLE IF NOT EXISTS accounts (
       id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE,
       account_type TEXT NOT NULL, platform TEXT NOT NULL, balance TEXT NOT NULL,
@@ -114,40 +119,22 @@ def clean_item(raw):
     category = str(raw.get("category", "宽基指数")).strip()
     if category not in allowed_categories:
         raise ValueError("基金类别不正确")
-    present = {key: raw.get(key) not in (None, "") for key in ("market_value", "holding_profit", "return_rate")}
-    if sum(present.values()) < 2 and raw.get("cost") in (None, ""):
-        raise ValueError("当前金额、持有收益、收益率请至少填写两项")
-    value = Decimal(money(raw["market_value"])) if present["market_value"] else None
-    profit = signed_money(raw["holding_profit"]) if present["holding_profit"] else None
+    if any(raw.get(key) in (None, "") for key in ("market_value", "holding_profit", "return_rate")):
+        raise ValueError("请按支付宝原样填写当前金额、持有收益和持有收益率")
+    value = Decimal(money(raw["market_value"]))
+    profit = signed_money(raw["holding_profit"])
     try:
-        rate = Decimal(str(raw.get("return_rate", "")).replace("%", "").strip()) / 100 if present["return_rate"] else None
+        reported_rate = Decimal(str(raw["return_rate"]).replace("%", "").strip())
     except InvalidOperation:
         raise ValueError("收益率格式不正确")
-    if rate is not None and rate <= -1:
+    if reported_rate <= -100:
         raise ValueError("收益率必须大于 -100%")
-    if all(present.values()):
-        cost_value = value - profit
-        if cost_value <= 0:
-            raise ValueError("三项数据无法得到有效本金，请检查")
-        expected_rate = profit / cost_value
-        if abs(expected_rate - rate) > Decimal("0.0002"):
-            raise ValueError("金额、持有收益和收益率不一致，请检查后保存")
-    if value is not None and profit is not None:
-        cost_value = value - profit
-    elif value is not None and rate is not None:
-        cost_value = value / (Decimal("1") + rate); profit = value - cost_value
-    elif profit is not None and rate is not None:
-        if rate == 0: raise ValueError("只填持有收益和收益率时，收益率不能为 0")
-        cost_value = profit / rate; value = cost_value + profit
-    else:
-        value = Decimal(money(raw.get("market_value", 0))); cost_value = Decimal(money(raw.get("cost", value))); profit = value - cost_value
-    if cost_value < 0 or value < 0:
-        raise ValueError("根据填写数据无法得到有效持仓")
-    market_value, cost = money(value), money(cost_value)
-    calculated_rate = (value - cost_value) / cost_value * 100 if cost_value else Decimal("0")
+    rate = reported_rate / 100
+    estimated_cost = profit / rate if rate and profit / rate >= 0 else value - profit
+    market_value, cost = money(value), money(max(estimated_cost, Decimal("0")))
     return {"code": code, "name": name, "category": category, "market_value": market_value,
             "cost": cost, "holding_profit": money(abs(profit)) if profit >= 0 else "-" + money(abs(profit)),
-            "return_rate": str(calculated_rate.quantize(Decimal("0.01")))}
+            "return_rate": str(reported_rate.quantize(Decimal("0.01")))}
 
 
 def fund_category(fund_type):
@@ -270,9 +257,10 @@ class Handler(SimpleHTTPRequestHandler):
             total = sum(Decimal(r["market_value"]) for r in rows)
             account_total = sum(Decimal(r["balance"]) for r in accounts)
             total_cost = sum(Decimal(r["cost"]) for r in rows)
+            reported_profit = sum(Decimal(r["holding_profit"]) for r in rows)
             self.json_response({"holdings": rows, "archivedHoldings": archived, "accounts": accounts, "total": str(total + account_total),
                 "fundTotal": str(total), "accountTotal": str(account_total), "totalCost": str(total_cost),
-                "profit": str(total-total_cost), "snapshots": snapshots,
+                "profit": str(reported_profit), "snapshots": snapshots,
                 "coins": {"quantity": coin_row[0], "value": str(coin_row[1])}})
             return
         if self.path == "/api/manage":
@@ -333,24 +321,25 @@ class Handler(SimpleHTTPRequestHandler):
                 with db() as conn:
                     existing = conn.execute("SELECT id FROM holdings WHERE code=? OR name=? LIMIT 1",
                                             (item["code"], item["name"])).fetchone()
-                    values = (item["code"] or None, item["name"], item["category"], item["market_value"], item["cost"], now)
+                    values = (item["code"] or None, item["name"], item["category"], item["market_value"], item["cost"], now,
+                              item["holding_profit"], item["return_rate"])
                     if existing:
-                        conn.execute("UPDATE holdings SET code=?,name=?,category=?,market_value=?,cost=?,updated_at=?,archived_at=NULL WHERE id=?",
+                        conn.execute("UPDATE holdings SET code=?,name=?,category=?,market_value=?,cost=?,updated_at=?,holding_profit=?,return_rate=?,archived_at=NULL WHERE id=?",
                                      values + (existing[0],))
                     else:
-                        conn.execute("INSERT INTO holdings(code,name,category,market_value,cost,updated_at) VALUES(?,?,?,?,?,?)", values)
+                        conn.execute("INSERT INTO holdings(code,name,category,market_value,cost,updated_at,holding_profit,return_rate) VALUES(?,?,?,?,?,?,?,?)", values)
                     key = item["code"] or "name:" + item["name"]
                     conn.execute("DELETE FROM deleted_records WHERE table_name='holdings' AND record_key=?", (key,))
                     conn.execute("INSERT OR REPLACE INTO holding_snapshots VALUES(?,?,?,?,?,?,?,?,?)",
                       (datetime.now().date().isoformat(), key, item["code"] or None, item["name"], item["market_value"],
-                       item["holding_profit"], item["return_rate"], "manual-verified", now))
+                       item["holding_profit"], item["return_rate"], "platform-manual", now))
                     conn.execute("DELETE FROM deleted_records WHERE table_name='holding_snapshots' AND record_key=?",
                                  (datetime.now().date().isoformat() + ":" + key,))
                     audit(conn, "HOLDING_SNAPSHOT_SAVED", "保存基金快照：" + item["name"],
-                          {"code": item["code"], "marketValue": item["market_value"], "verified": True}, now)
+                          {"code": item["code"], "marketValue": item["market_value"], "mode": "platform-original"}, now)
                     save_asset_snapshot(conn, now)
                 self.json_response({"ok": True, "mode": "updated" if existing else "created",
-                                    "verified": True, "calculated": item})
+                                    "preserved": True, "values": item})
                 return
             if self.path in ("/api/holdings/archive", "/api/holdings/restore"):
                 code = re.sub(r"\D", "", str(self.read_json().get("code", "")))[:6]
@@ -381,8 +370,8 @@ class Handler(SimpleHTTPRequestHandler):
                     latest = conn.execute("SELECT * FROM holding_snapshots WHERE holding_key=? ORDER BY day DESC LIMIT 1", (code,)).fetchone()
                     if latest:
                         cost = money(Decimal(latest["market_value"]) - Decimal(latest["holding_profit"]))
-                        conn.execute("UPDATE holdings SET market_value=?,cost=?,updated_at=? WHERE code=?",
-                                     (latest["market_value"], cost, now, code))
+                        conn.execute("UPDATE holdings SET market_value=?,cost=?,holding_profit=?,return_rate=?,updated_at=? WHERE code=?",
+                                     (latest["market_value"], cost, latest["holding_profit"], latest["return_rate"], now, code))
                     else:
                         conn.execute("UPDATE holdings SET archived_at=?,updated_at=? WHERE code=?", (now, now, code))
                     audit(conn, "HOLDING_SNAPSHOT_DELETED", "删除基金历史快照：" + old["name"],
