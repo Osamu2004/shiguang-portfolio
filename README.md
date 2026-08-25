@@ -90,7 +90,7 @@ PyInstaller不支持在Linux上交叉构建真正的Windows `.exe` 或macOS `.ap
 
 ### 自动更新
 
-应用启动后会检查私有源码仓库的最新 Release。首次使用时，在“数据同步 → 软件更新”中保存一个仅授予源码仓库 Contents 读取权限的 fine-grained Token。Token 只进入系统凭据库。更新包必须同时通过 Release 中的 SHA-256 校验，确认后才会替换程序并重启；个人数据库不会被修改。
+应用启动后会检查私有源码仓库的最新 Release。macOS 已通过 `gh auth login` 登录时会自动复用 GitHub CLI 凭据；否则可在“数据同步 → 软件更新”中保存一个仅授予源码仓库 Contents 读取权限的 fine-grained Token。Token 只进入系统凭据库。更新包必须同时通过 Release 中的 SHA-256 校验，确认后才会替换程序并重启；个人数据库不会被修改。
 
 ## 与参考项目的关系
 

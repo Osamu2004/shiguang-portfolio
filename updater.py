@@ -12,14 +12,29 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-VERSION = "0.5.2"
+VERSION = "0.5.3"
 REPO = "Osamu2004/shiguang-portfolio"
 SERVICE = "shiguang-updates"
 
 
 def _token():
-    import keyring
-    return keyring.get_password(SERVICE, REPO)
+    candidates = [shutil.which("gh"), "/opt/homebrew/bin/gh", "/usr/local/bin/gh"]
+    for executable in candidates:
+        if not executable or not Path(executable).is_file():
+            continue
+        try:
+            token = subprocess.check_output([executable, "auth", "token"],
+                stderr=subprocess.DEVNULL, timeout=8, text=True).strip()
+            if token:
+                return token
+        except (OSError, subprocess.SubprocessError):
+            continue
+    try:
+        import keyring
+        return keyring.get_password(SERVICE, REPO)
+    except Exception:
+        pass
+    return None
 
 
 def store_token(token):
