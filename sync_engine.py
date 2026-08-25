@@ -67,7 +67,7 @@ def export_data(db_path):
     conn = sqlite3.connect(str(db_path)); conn.row_factory = sqlite3.Row
     try:
         tables = {}
-        for name in ("holdings", "health_daily", "portfolio_snapshots", "coins", "coin_collection"):
+        for name in ("accounts", "holdings", "health_daily", "portfolio_snapshots", "coins", "coin_collection"):
             exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
             tables[name] = [dict(r) for r in conn.execute("SELECT * FROM " + name)] if exists else []
         return {"schemaVersion": 1, "updatedAt": datetime.now(timezone.utc).isoformat(), "tables": tables}
@@ -87,7 +87,7 @@ def merge_vaults(local, remote):
     if not remote:
         return local
     result = {"schemaVersion": 1, "updatedAt": max(local.get("updatedAt", ""), remote.get("updatedAt", "")), "tables": {}}
-    for table in ("holdings", "health_daily", "portfolio_snapshots", "coins", "coin_collection"):
+    for table in ("accounts", "holdings", "health_daily", "portfolio_snapshots", "coins", "coin_collection"):
         merged = {}
         for source in (remote, local):
             for row in source.get("tables", {}).get(table, []):
@@ -104,6 +104,11 @@ def merge_vaults(local, remote):
 def import_data(db_path, payload):
     conn = sqlite3.connect(str(db_path))
     try:
+        for row in payload["tables"].get("accounts", []):
+            conn.execute("""INSERT INTO accounts(name,account_type,platform,balance,updated_at)
+              VALUES(?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET account_type=excluded.account_type,
+              platform=excluded.platform,balance=excluded.balance,updated_at=excluded.updated_at""",
+              tuple(row.get(k) for k in ("name","account_type","platform","balance","updated_at")))
         for row in payload["tables"].get("holdings", []):
             existing = conn.execute("SELECT id FROM holdings WHERE code=? OR name=? LIMIT 1",
                                     (row.get("code"), row["name"])).fetchone()

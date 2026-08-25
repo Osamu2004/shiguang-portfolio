@@ -1,0 +1,3 @@
+.account-form{grid-template-columns:minmax(180px,1fr) 150px 180px 150px auto}
+@media(max-width:1000px){.account-form{grid-template-columns:1fr 1fr}}
+@media(max-width:600px){.account-form{grid-template-columns:1fr}}

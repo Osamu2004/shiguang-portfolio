@@ -40,6 +40,11 @@ class SyncTest(unittest.TestCase):
         merged=sync.merge_vaults(local,{"updatedAt":"1","tables":{}})
         self.assertEqual(merged["tables"]["coins"][0]["id"],"coin-1")
 
+    def test_accounts_are_included_in_merge(self):
+        local={"updatedAt":"2","tables":{"accounts":[{"name":"微信零钱","balance":"20","updated_at":"2"}]}}
+        merged=sync.merge_vaults(local,{"updatedAt":"1","tables":{}})
+        self.assertEqual(merged["tables"]["accounts"][0]["name"], "微信零钱")
+
     def test_github_sync_uses_bundled_ca_certificates(self):
         vault = sync.GitHubVault("owner/repo", "token")
         response = mock.MagicMock()

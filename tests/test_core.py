@@ -16,6 +16,12 @@ class CoreTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "基金类别"):
             app.clean_item({"name": "ETF", "category": "未知", "market_value": "100"})
 
+    def test_cash_account_supports_payment_platform(self):
+        item = app.clean_account({"name": "支付宝余额", "account_type": "电子钱包",
+                                  "platform": "支付宝", "balance": "88.6"})
+        self.assertEqual(item["platform"], "支付宝")
+        self.assertEqual(item["balance"], "88.60")
+
     def test_rejects_negative_money(self):
         with self.assertRaises(ValueError): app.money("-1")
 

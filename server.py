@@ -33,6 +33,11 @@ def db():
       cost TEXT NOT NULL DEFAULT '0', updated_at TEXT NOT NULL,
       UNIQUE(code), UNIQUE(name)
     )""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS accounts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE,
+      account_type TEXT NOT NULL, platform TEXT NOT NULL, balance TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )""")
     conn.execute("""CREATE TABLE IF NOT EXISTS health_daily (
       day TEXT PRIMARY KEY, steps INTEGER, sleep_minutes INTEGER,
       resting_heart_rate REAL, active_energy REAL, weight REAL,
@@ -75,10 +80,24 @@ def clean_item(raw):
             "cost": money(raw.get("cost", market_value))}
 
 
+def clean_account(raw):
+    name = str(raw.get("name", "")).strip()[:80]
+    if not name:
+        raise ValueError("请填写账户名称")
+    allowed_types = {"现金", "银行存款", "电子钱包", "证券账户", "理财账户", "其他资产"}
+    account_type = str(raw.get("account_type", "现金")).strip()
+    if account_type not in allowed_types:
+        raise ValueError("账户类型不正确")
+    platform = str(raw.get("platform", "")).strip()[:40] or "其他"
+    return {"name": name, "account_type": account_type, "platform": platform,
+            "balance": money(raw.get("balance", 0))}
+
+
 def save_asset_snapshot(conn, now):
     fund = Decimal(str(conn.execute("SELECT COALESCE(SUM(market_value + 0),0) FROM holdings").fetchone()[0]))
+    account = Decimal(str(conn.execute("SELECT COALESCE(SUM(balance + 0),0) FROM accounts").fetchone()[0]))
     conn.execute("INSERT OR REPLACE INTO portfolio_snapshots VALUES(?,?,?,?)",
-                 (datetime.now().date().isoformat(), money(fund), "manual", now))
+                 (datetime.now().date().isoformat(), money(fund + account), "manual", now))
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -105,11 +124,14 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == "/api/state":
             with db() as conn:
                 rows = [dict(r) for r in conn.execute("SELECT * FROM holdings ORDER BY market_value + 0 DESC")]
+                accounts = [dict(r) for r in conn.execute("SELECT * FROM accounts ORDER BY balance + 0 DESC")]
                 snapshots = [dict(r) for r in conn.execute("SELECT * FROM portfolio_snapshots ORDER BY day LIMIT 365")]
                 coin_row = conn.execute("SELECT COALESCE(SUM(quantity),0),COALESCE(SUM(estimated_value + 0),0) FROM coin_collection").fetchone()
             total = sum(Decimal(r["market_value"]) for r in rows)
+            account_total = sum(Decimal(r["balance"]) for r in accounts)
             total_cost = sum(Decimal(r["cost"]) for r in rows)
-            self.json_response({"holdings": rows, "total": str(total), "totalCost": str(total_cost),
+            self.json_response({"holdings": rows, "accounts": accounts, "total": str(total + account_total),
+                "fundTotal": str(total), "accountTotal": str(account_total), "totalCost": str(total_cost),
                 "profit": str(total-total_cost), "snapshots": snapshots,
                 "coins": {"quantity": coin_row[0], "value": str(coin_row[1])}})
             return
@@ -123,6 +145,7 @@ class Handler(SimpleHTTPRequestHandler):
                 payload = {
                     "schemaVersion": 2,
                     "exportedAt": datetime.now().isoformat(),
+                    "accounts": [dict(r) for r in conn.execute("SELECT * FROM accounts ORDER BY id")],
                     "holdings": [dict(r) for r in conn.execute("SELECT * FROM holdings ORDER BY id")],
                     "healthDaily": [dict(r) for r in conn.execute("SELECT * FROM health_daily ORDER BY day")],
                     "portfolioSnapshots": [dict(r) for r in conn.execute("SELECT * FROM portfolio_snapshots ORDER BY day")],
@@ -159,6 +182,17 @@ class Handler(SimpleHTTPRequestHandler):
                 with db() as conn:
                     conn.execute("INSERT INTO holdings(code,name,category,market_value,cost,updated_at) VALUES(?,?,?,?,?,?)",
                                  (item["code"] or None, item["name"], item["category"], item["market_value"], item["cost"], now))
+                    save_asset_snapshot(conn, now)
+                self.json_response({"ok": True})
+                return
+            if self.path == "/api/accounts":
+                item = clean_account(self.read_json())
+                now = datetime.now().isoformat(timespec="seconds")
+                with db() as conn:
+                    conn.execute("""INSERT INTO accounts(name,account_type,platform,balance,updated_at)
+                      VALUES(?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET account_type=excluded.account_type,
+                      platform=excluded.platform,balance=excluded.balance,updated_at=excluded.updated_at""",
+                      (item["name"], item["account_type"], item["platform"], item["balance"], now))
                     save_asset_snapshot(conn, now)
                 self.json_response({"ok": True})
                 return
