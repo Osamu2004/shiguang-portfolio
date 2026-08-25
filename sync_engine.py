@@ -27,8 +27,8 @@ SERVICE = "shiguang-portfolio"
 
 
 def _key(password, salt, iterations=ITERATIONS):
-    if len(password) < 10:
-        raise ValueError("同步密码至少需10个字符")
+    if not password:
+        raise ValueError("同步密码不能为空")
     return PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt,
                      iterations=iterations, backend=default_backend()).derive(password.encode("utf-8"))
 

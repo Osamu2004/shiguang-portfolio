@@ -8,6 +8,13 @@ sync = importlib.util.module_from_spec(spec); spec.loader.exec_module(sync)
 
 
 class SyncTest(unittest.TestCase):
+    def test_short_password_is_allowed(self):
+        self.assertEqual(sync.decrypt_vault(sync.encrypt_vault({"ok": True}, "1"), "1"), {"ok": True})
+
+    def test_empty_password_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "不能为空"):
+            sync.encrypt_vault({}, "")
+
     def test_encrypt_roundtrip_and_random_nonce(self):
         payload = {"schemaVersion": 1, "tables": {"holdings": []}}
         one = sync.encrypt_vault(payload, "correct horse battery staple")

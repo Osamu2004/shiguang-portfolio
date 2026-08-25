@@ -54,7 +54,7 @@ Apple HealthKit 和 Android Health Connect 的自动同步必须由原生手机�
 1. 创建一个与源代码分开的私有仓库，例如 `owner/shiguang-vault`。
 2. 创建 fine-grained GitHub token，仅授予该仓库 Contents 读写权限。
 3. 在应用的“同步”页保存仓库与令牌。令牌进入系统凭据库，不进入SQLite或Git。
-4. 设定至少10个字符的同步密码，并在两台电脑上使用相同密码。
+4. 设定一个非空同步密码，并在两台电脑上使用相同密码。程序不限制长度，但仍建议使用较长的独立密码。
 
 保险库使用 PBKDF2-SHA256（600,000次）派生密钥，再以 AES-256-GCM 认证加密。每次上传都生成新的随机盐和 nonce。GitHub上只存在 `vault.enc`，同步密码不会保存。
 
