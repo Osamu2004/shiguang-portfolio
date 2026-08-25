@@ -138,8 +138,11 @@ def import_data(db_path, payload):
             conn.execute("INSERT OR REPLACE INTO fund_market_daily VALUES(?,?,?,?,?,?,?)", tuple(row.get(k) for k in
               ("code","day","unit_nav","cumulative_nav","daily_change_pct","source","fetched_at")))
         for row in payload["tables"].get("fund_strategies", []):
-            conn.execute("INSERT OR REPLACE INTO fund_strategies VALUES(?,?,?,?,?,?)", tuple(row.get(k) for k in
-              ("code","mode","daily_amount","per_drop_pct_amount","max_daily_amount","updated_at")))
+            conn.execute("""INSERT OR REPLACE INTO fund_strategies
+              (code,mode,daily_amount,per_drop_pct_amount,max_daily_amount,drawdown_budget,executed_drawdown_stage,updated_at)
+              VALUES(?,?,?,?,?,?,?,?)""", (
+              row.get("code"),row.get("mode","none"),row.get("daily_amount","0"),row.get("per_drop_pct_amount","0"),
+              row.get("max_daily_amount","0"),row.get("drawdown_budget","0"),row.get("executed_drawdown_stage",0),row.get("updated_at")))
         for row in payload["tables"].get("user_preferences", []):
             conn.execute("INSERT OR REPLACE INTO user_preferences VALUES(?,?,?,?,?)", tuple(row.get(k) for k in
               ("id","show_health","show_coins","show_research","updated_at")))

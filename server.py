@@ -88,7 +88,13 @@ def db():
     conn.execute("""CREATE TABLE IF NOT EXISTS fund_strategies (
       code TEXT PRIMARY KEY,mode TEXT NOT NULL DEFAULT 'none',daily_amount TEXT NOT NULL DEFAULT '0',
       per_drop_pct_amount TEXT NOT NULL DEFAULT '0',max_daily_amount TEXT NOT NULL DEFAULT '0',
+      drawdown_budget TEXT NOT NULL DEFAULT '0',executed_drawdown_stage INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL)""")
+    strategy_columns = {row[1] for row in conn.execute("PRAGMA table_info(fund_strategies)")}
+    if "drawdown_budget" not in strategy_columns:
+        conn.execute("ALTER TABLE fund_strategies ADD COLUMN drawdown_budget TEXT NOT NULL DEFAULT '0'")
+    if "executed_drawdown_stage" not in strategy_columns:
+        conn.execute("ALTER TABLE fund_strategies ADD COLUMN executed_drawdown_stage INTEGER NOT NULL DEFAULT 0")
     conn.execute("""CREATE TABLE IF NOT EXISTS user_preferences (
       id INTEGER PRIMARY KEY CHECK(id=1),show_health INTEGER NOT NULL DEFAULT 0,
       show_coins INTEGER NOT NULL DEFAULT 0,show_research INTEGER NOT NULL DEFAULT 0,
@@ -267,9 +273,30 @@ def fetch_fund_market(code, page_size=1200):
     return rows
 
 
-def planned_investment(strategy, market):
+def drawdown_status(strategy, market, history=None):
+    values=[]
+    for row in history or []:
+        try: values.append(Decimal(str(row.get("unit_nav"))))
+        except (InvalidOperation, TypeError): pass
+    try: current=Decimal(str((market or {}).get("unit_nav")))
+    except (InvalidOperation, TypeError): current=Decimal("0")
+    if current > 0: values.append(current)
+    if not values or current <= 0: return {"highest_nav":None,"drawdown_pct":None,"triggered_stage":0}
+    highest=max(values); drawdown=max(Decimal("0"),(highest-current)/highest*100)
+    thresholds=(Decimal("10"),Decimal("20"),Decimal("35"),Decimal("50"))
+    stage=sum(1 for threshold in thresholds if drawdown >= threshold)
+    return {"highest_nav":str(highest),"drawdown_pct":str(drawdown.quantize(Decimal("0.01"))),"triggered_stage":stage}
+
+
+def planned_investment(strategy, market, history=None):
     if not strategy or strategy["mode"] == "none": return Decimal("0")
     if strategy["mode"] == "daily": return Decimal(strategy["daily_amount"])
+    if strategy["mode"] == "drawdown":
+        status=drawdown_status(strategy,market,history); stage=status["triggered_stage"]
+        executed=max(0,min(4,int(strategy.get("executed_drawdown_stage",0))))
+        if stage <= executed: return Decimal("0")
+        weights=(Decimal("0.20"),Decimal("0.20"),Decimal("0.30"),Decimal("0.30"))
+        return Decimal(strategy["drawdown_budget"])*sum(weights[executed:stage])
     change=Decimal(str((market or {}).get("daily_change_pct", "0")))
     if change >= 0: return Decimal("0")
     amount=(-change)*Decimal(strategy["per_drop_pct_amount"])
@@ -368,11 +395,12 @@ class Handler(SimpleHTTPRequestHandler):
                     market=conn.execute("SELECT day,unit_nav,cumulative_nav,daily_change_pct FROM fund_market_daily WHERE code=? ORDER BY day DESC LIMIT 1",(row.get("code"),)).fetchone()
                     market_data=dict(market) if market else None
                     if market_data: row["public_market"]=market_data
-                    history=[dict(x) for x in conn.execute("SELECT day,unit_nav,daily_change_pct FROM fund_market_daily WHERE code=? ORDER BY day DESC LIMIT 1200",(row.get("code"),))]
+                    history=[dict(x) for x in conn.execute("SELECT day,unit_nav,daily_change_pct FROM fund_market_daily WHERE code=? ORDER BY day DESC LIMIT 10000",(row.get("code"),))]
                     row["public_market_history"]=list(reversed(history))
                     strategy=conn.execute("SELECT * FROM fund_strategies WHERE code=?",(row.get("code"),)).fetchone()
-                    row["investment_strategy"]=dict(strategy) if strategy else {"mode":"none","daily_amount":"0","per_drop_pct_amount":"0","max_daily_amount":"0"}
-                    row["planned_investment"]=str(planned_investment(row["investment_strategy"],market_data).quantize(Decimal("0.01")))
+                    row["investment_strategy"]=dict(strategy) if strategy else {"mode":"none","daily_amount":"0","per_drop_pct_amount":"0","max_daily_amount":"0","drawdown_budget":"0","executed_drawdown_stage":0}
+                    row["drawdown_status"]=drawdown_status(row["investment_strategy"],market_data,history)
+                    row["planned_investment"]=str(planned_investment(row["investment_strategy"],market_data,history).quantize(Decimal("0.01")))
             total = sum(Decimal(r["market_value"]) for r in rows)
             account_total = sum(Decimal(r["balance"]) for r in accounts)
             total_cost = sum(Decimal(r["cost"]) for r in rows)
@@ -506,7 +534,7 @@ class Handler(SimpleHTTPRequestHandler):
                 with db() as conn:
                     codes=[requested] if len(requested)==6 else [r[0] for r in conn.execute(
                       "SELECT DISTINCT code FROM holdings WHERE archived_at IS NULL AND length(code)=6")]
-                updated=0; errors={}; now=datetime.now().isoformat(timespec="seconds"); page_size=1200 if raw.get("full_history") else 120
+                updated=0; errors={}; now=datetime.now().isoformat(timespec="seconds"); page_size=10000 if raw.get("full_history") else 120
                 with concurrent.futures.ThreadPoolExecutor(max_workers=min(4,max(1,len(codes)))) as pool:
                     futures={pool.submit(fetch_fund_market,code,page_size):code for code in codes}
                     for future in concurrent.futures.as_completed(futures):
@@ -523,14 +551,20 @@ class Handler(SimpleHTTPRequestHandler):
                 raw=self.read_json(); code=re.sub(r"\D", "", str(raw.get("code", "")))[:6]
                 mode=str(raw.get("mode", "none"));
                 if len(code)!=6: raise ValueError("基金代码不正确")
-                if mode not in ("none","daily","drop"): raise ValueError("定投策略不正确")
-                daily=money(raw.get("daily_amount",0)); per_pct=money(raw.get("per_drop_pct_amount",0)); cap=money(raw.get("max_daily_amount",0))
+                if mode not in ("none","daily","drop","drawdown"): raise ValueError("定投策略不正确")
+                daily=money(raw.get("daily_amount",0)); per_pct=money(raw.get("per_drop_pct_amount",0)); cap=money(raw.get("max_daily_amount",0)); budget=money(raw.get("drawdown_budget",0))
+                try: executed=int(raw.get("executed_drawdown_stage",0))
+                except (TypeError,ValueError): raise ValueError("已执行档位不正确")
+                if executed not in range(5): raise ValueError("已执行档位不正确")
                 if mode=="daily" and Decimal(daily)<=0: raise ValueError("每日定投金额必须大于 0")
                 if mode=="drop" and Decimal(per_pct)<=0: raise ValueError("每下跌 1% 的定投金额必须大于 0")
+                if mode=="drawdown" and Decimal(budget)<=0: raise ValueError("回撤资金总额必须大于 0")
                 now=datetime.now().isoformat(timespec="seconds")
                 with db() as conn:
                     if not conn.execute("SELECT 1 FROM holdings WHERE code=?",(code,)).fetchone(): raise ValueError("未找到该基金")
-                    conn.execute("INSERT OR REPLACE INTO fund_strategies VALUES(?,?,?,?,?,?)",(code,mode,daily,per_pct,cap,now))
+                    conn.execute("""INSERT OR REPLACE INTO fund_strategies
+                      (code,mode,daily_amount,per_drop_pct_amount,max_daily_amount,drawdown_budget,executed_drawdown_stage,updated_at)
+                      VALUES(?,?,?,?,?,?,?,?)""",(code,mode,daily,per_pct,cap,budget,executed,now))
                     audit(conn,"FUND_STRATEGY_SAVED","保存基金定投策略："+code,{"mode":mode},now)
                 self.json_response({"ok":True}); return
             if self.path == "/api/preferences":

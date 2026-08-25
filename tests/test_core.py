@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +10,19 @@ spec = importlib.util.spec_from_file_location("app", Path(__file__).parents[1] /
 app = importlib.util.module_from_spec(spec); spec.loader.exec_module(app)
 
 class CoreTest(unittest.TestCase):
+    def test_database_migrates_existing_fund_strategy_for_drawdown(self):
+        with tempfile.TemporaryDirectory() as folder:
+            data=Path(folder); path=data/"portfolio.db"
+            with sqlite3.connect(path) as conn:
+                conn.execute("""CREATE TABLE fund_strategies (code TEXT PRIMARY KEY,mode TEXT NOT NULL,
+                  daily_amount TEXT NOT NULL,per_drop_pct_amount TEXT NOT NULL,max_daily_amount TEXT NOT NULL,updated_at TEXT NOT NULL)""")
+                conn.execute("INSERT INTO fund_strategies VALUES(?,?,?,?,?,?)",("050025","daily","10","0","0","2026-08-26"))
+            with mock.patch.object(app,"DATA",data),mock.patch.object(app,"DB",path):
+                with app.db() as conn:
+                    row=conn.execute("SELECT * FROM fund_strategies WHERE code='050025'").fetchone()
+                    self.assertEqual(row["drawdown_budget"],"0")
+                    self.assertEqual(row["executed_drawdown_stage"],0)
+
     def test_database_adds_archive_column_without_losing_holdings(self):
         with tempfile.TemporaryDirectory() as folder:
             data = Path(folder)
@@ -78,6 +92,18 @@ class CoreTest(unittest.TestCase):
         strategy={"mode":"drop","daily_amount":"0","per_drop_pct_amount":"100","max_daily_amount":"200"}
         self.assertEqual(app.planned_investment(strategy,{"daily_change_pct":"-2.30"}), 200)
         self.assertEqual(app.planned_investment(strategy,{"daily_change_pct":"1.20"}), 0)
+
+    def test_drawdown_strategy_uses_historical_high_and_unexecuted_tranches(self):
+        strategy={"mode":"drawdown","drawdown_budget":"1000","executed_drawdown_stage":1}
+        history=[{"unit_nav":"2.00"},{"unit_nav":"1.20"}]
+        market={"unit_nav":"1.20","daily_change_pct":"-1"}
+        self.assertEqual(app.drawdown_status(strategy,market,history)["triggered_stage"],3)
+        self.assertEqual(app.planned_investment(strategy,market,history),500)
+
+    def test_drawdown_strategy_does_not_repeat_executed_stage(self):
+        strategy={"mode":"drawdown","drawdown_budget":"1000","executed_drawdown_stage":2}
+        history=[{"unit_nav":"2.00"},{"unit_nav":"1.60"}]
+        self.assertEqual(app.planned_investment(strategy,{"unit_nav":"1.60"},history),0)
 
     def test_all_three_platform_fields_are_required(self):
         with self.assertRaisesRegex(ValueError, "原样填写"):
