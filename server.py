@@ -103,6 +103,8 @@ def db():
     conn.execute("""CREATE TABLE IF NOT EXISTS scholar_paper_snapshots (
       profile_id TEXT NOT NULL,paper_id TEXT NOT NULL,day TEXT NOT NULL,citations INTEGER NOT NULL,
       captured_at TEXT NOT NULL,PRIMARY KEY(profile_id,paper_id,day))""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS scholar_settings (
+      id INTEGER PRIMARY KEY CHECK(id=1),profile_url TEXT NOT NULL,auto_open INTEGER NOT NULL DEFAULT 1,updated_at TEXT NOT NULL)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS audit_logs (
       id TEXT PRIMARY KEY, event_type TEXT NOT NULL, summary TEXT NOT NULL,
       details TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL)""")
@@ -243,6 +245,20 @@ def save_asset_snapshot(conn, now):
 
 
 class Handler(SimpleHTTPRequestHandler):
+    def extension_origin(self):
+        origin = self.headers.get("Origin", "")
+        if origin.startswith(("chrome-extension://", "extension://", "moz-extension://")):
+            return origin
+        return ""
+
+    def do_OPTIONS(self):
+        origin = self.extension_origin()
+        if not origin:
+            self.send_error(403); return
+        self.send_response(204); self.send_header("Access-Control-Allow-Origin", origin)
+        self.send_header("Vary", "Origin")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type"); self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS"); self.end_headers()
+
     def translate_path(self, path):
         clean = path.split("?", 1)[0].lstrip("/") or "index.html"
         return str(STATIC / clean)
@@ -253,6 +269,10 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
+        origin = self.extension_origin()
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.end_headers()
         self.wfile.write(data)
 
@@ -356,6 +376,9 @@ class Handler(SimpleHTTPRequestHandler):
                 snapshots=[dict(r) for r in conn.execute("SELECT * FROM scholar_snapshots WHERE profile_id=? ORDER BY day",(pid,))]
                 papers=[dict(r) for r in conn.execute("""SELECT p.*,(SELECT citations FROM scholar_paper_snapshots s WHERE s.profile_id=p.profile_id AND s.paper_id=p.paper_id ORDER BY day DESC LIMIT 1) citations FROM scholar_papers p WHERE profile_id=? ORDER BY citations DESC,publication_year DESC""",(pid,))]
             self.json_response({"profile":dict(profile),"snapshots":snapshots,"papers":papers}); return
+        if self.path == "/api/scholar/config":
+            with db() as conn: row=conn.execute("SELECT * FROM scholar_settings WHERE id=1").fetchone()
+            self.json_response(dict(row) if row else {"profile_url":"","auto_open":True}); return
         if self.path == "/api/scholar-extension":
             source=RESOURCES / "scholar-extension"; buffer=io.BytesIO()
             with zipfile.ZipFile(buffer,"w",zipfile.ZIP_DEFLATED) as archive:
@@ -543,6 +566,14 @@ class Handler(SimpleHTTPRequestHandler):
                         conn.execute("INSERT OR REPLACE INTO scholar_papers VALUES(?,?,?,?,?,?,?,?)",(pid,paper_id,title,str(p.get("authors", ""))[:1000],str(p.get("venue", ""))[:500],whole(p.get("year")) or None,str(p.get("url", ""))[:1000],now))
                         conn.execute("INSERT OR REPLACE INTO scholar_paper_snapshots VALUES(?,?,?,?,?)",(pid,paper_id,day,whole(p.get("citations")),captured))
                 self.json_response({"ok":True,"papers":len(papers),"day":day}); return
+            if self.path == "/api/scholar/config":
+                raw=self.read_json(); url=str(raw.get("profile_url","")).strip()[:1000]
+                parsed=urllib.parse.urlparse(url); query=urllib.parse.parse_qs(parsed.query)
+                if parsed.scheme!="https" or parsed.hostname!="scholar.google.com" or parsed.path!="/citations" or not query.get("user"):
+                    raise ValueError("请输入完整的 Google Scholar 个人主页地址")
+                now=datetime.now().isoformat(timespec="seconds")
+                with db() as conn: conn.execute("INSERT OR REPLACE INTO scholar_settings VALUES(1,?,?,?)",(url,1 if raw.get("auto_open",True) else 0,now))
+                self.json_response({"ok":True,"profile_url":url}); return
             if self.path == "/api/update/install":
                 from updater import stage_and_install
                 result = stage_and_install(); self.json_response(result)

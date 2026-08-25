@@ -1,8 +1,10 @@
 {
   "manifest_version": 3,
   "name": "拾光 · Scholar 快照",
-  "version": "1.0.0",
-  "description": "从你已打开的 Google Scholar 个人主页导出本地科研快照。",
+  "version": "1.1.0",
+  "description": "将你已打开的 Google Scholar 个人主页直接同步到本机拾光。",
   "content_scripts": [{"matches": ["https://scholar.google.com/citations*", "https://scholar.googleusercontent.com/citations*"], "js": ["content.js"], "css": ["content.css"]}],
-  "permissions": []
+  "background": {"service_worker": "background.js"},
+  "host_permissions": ["http://127.0.0.1:8787/*"],
+  "permissions": ["storage"]
 }
