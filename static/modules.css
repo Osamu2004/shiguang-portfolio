@@ -79,12 +79,29 @@ form label {
   position: fixed;
   z-index: 90;
   max-width: calc(100vw - 24px);
-  max-height: calc(100vh - 24px);
-  overflow: auto;
+  max-height: min(680px, calc(100vh - 24px));
+  max-height: min(680px, calc(100dvh - 24px));
+  overflow-x: hidden;
+  overflow-y: auto !important;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  -webkit-overflow-scrolling: touch;
+  pointer-events: auto;
   margin: 0;
   padding: 18px;
   box-shadow: 0 14px 42px #1a171438;
 }
+.strategy-panel > .card-head {
+  position: sticky;
+  top: -18px;
+  z-index: 2;
+  margin: -18px -18px 12px;
+  padding: 16px 18px 12px;
+  border-bottom: 1px solid var(--rule-soft);
+  background: var(--card);
+}
+.strategy-panel::-webkit-scrollbar { width: 9px; }
+.strategy-panel::-webkit-scrollbar-thumb { background: var(--rule); border: 2px solid var(--card); }
 .strategy-panel[hidden] { display: none; }
 .strategy-panel .card-head h2 { margin: 0; font-size: 19px; }
 .drawdown-rules {
