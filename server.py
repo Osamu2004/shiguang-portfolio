@@ -139,8 +139,12 @@ class Handler(SimpleHTTPRequestHandler):
                 rows=[dict(r) for r in conn.execute("SELECT c.*,x.quantity,x.grade,x.purchase_price,x.estimated_value,x.storage_location,x.notes FROM coins c LEFT JOIN coin_collection x ON x.coin_id=c.id ORDER BY c.issue_year DESC")]
             self.json_response({"coins":rows}); return
         if self.path == "/api/update/check":
-            from updater import check
-            self.json_response(check()); return
+            try:
+                from updater import check
+                self.json_response(check())
+            except Exception as exc:
+                self.json_response({"error": str(exc)}, 503)
+            return
         super().do_GET()
 
     def do_POST(self):

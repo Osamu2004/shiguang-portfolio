@@ -4,6 +4,8 @@ import json
 import os
 import platform
 import shutil
+import socket
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -12,9 +14,12 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-VERSION = "0.5.3"
+import certifi
+
+VERSION = "0.5.4"
 REPO = "Osamu2004/shiguang-portfolio"
 SERVICE = "shiguang-updates"
+SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
 
 def _token():
@@ -47,12 +52,16 @@ def _request(url, token=None):
         "Authorization": "Bearer " + (token or _token() or ""), "User-Agent": "shiguang-updater",
         "X-GitHub-Api-Version": "2022-11-28"})
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=30, context=SSL_CONTEXT) as response:
             return response.read(), response.headers.get("Content-Type", "")
     except urllib.error.HTTPError as exc:
         if exc.code in (401, 403, 404):
             raise ValueError("无法读取私有更新，请填写具有 Releases 读取权限的 GitHub Token")
         raise ValueError("检查更新失败（HTTP %s）" % exc.code)
+    except urllib.error.URLError as exc:
+        raise ValueError("更新服务网络连接失败：%s" % (exc.reason or "未知网络错误"))
+    except (TimeoutError, socket.timeout):
+        raise ValueError("更新服务连接超时，请检查网络后重试")
 
 
 def _version_tuple(value):
@@ -73,7 +82,7 @@ def check(token=None):
 def _download(asset, token, target):
     request = urllib.request.Request(asset["url"], headers={"Accept": "application/octet-stream",
         "Authorization": "Bearer " + token, "User-Agent": "shiguang-updater"})
-    with urllib.request.urlopen(request, timeout=120) as response, open(target, "wb") as output:
+    with urllib.request.urlopen(request, timeout=120, context=SSL_CONTEXT) as response, open(target, "wb") as output:
         shutil.copyfileobj(response, output)
 
 
