@@ -19,5 +19,10 @@ class UpdaterTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "更新服务网络连接失败"):
                 updater._request("https://example.invalid", "token")
 
+    def test_macos_installer_restores_executable_permission(self):
+        source = Path(updater.__file__).read_text()
+        self.assertIn('chmod +x', source)
+        self.assertIn('/usr/bin/ditto', source)
+
 
 if __name__ == "__main__": unittest.main()

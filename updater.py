@@ -16,7 +16,7 @@ from pathlib import Path
 
 import certifi
 
-VERSION = "0.5.5"
+VERSION = "0.5.6"
 REPO = "Osamu2004/shiguang-portfolio"
 SERVICE = "shiguang-updates"
 SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
@@ -99,7 +99,12 @@ def stage_and_install(token=None):
     expected = checksum_file.read_text().strip().split()[0].lower()
     actual = hashlib.sha256(archive.read_bytes()).hexdigest()
     if expected != actual: raise ValueError("更新包校验失败，已停止安装")
-    extracted = root / "new"; extracted.mkdir(); zipfile.ZipFile(archive).extractall(extracted)
+    extracted = root / "new"; extracted.mkdir()
+    if platform.system() == "Darwin":
+        # zipfile.extractall does not restore Unix executable bits from app bundles.
+        subprocess.run(["/usr/bin/ditto", "-x", "-k", str(archive), str(extracted)], check=True)
+    else:
+        zipfile.ZipFile(archive).extractall(extracted)
     pid = str(os.getpid())
     if platform.system() == "Windows":
         target = Path(sys.executable).parent; source = extracted / "Shiguang"
@@ -109,7 +114,7 @@ def stage_and_install(token=None):
     elif platform.system() == "Darwin":
         target = Path(sys.executable).parents[2]; source = extracted / "Shiguang.app"
         script = root / "install.sh"
-        script.write_text('#!/bin/sh\nsleep 2\nrm -rf "{0}.old"\nmv "{0}" "{0}.old"\ncp -R "{1}" "{0}"\nxattr -dr com.apple.quarantine "{0}"\nopen "{0}"\n'.format(target, source))
+        script.write_text('#!/bin/sh\nsleep 2\nchmod +x "{1}/Contents/MacOS/"* || exit 1\nrm -rf "{0}.old"\nmv "{0}" "{0}.old" || exit 1\ncp -R "{1}" "{0}" || {{ mv "{0}.old" "{0}"; exit 1; }}\nchmod +x "{0}/Contents/MacOS/"*\nxattr -dr com.apple.quarantine "{0}"\nopen "{0}"\n'.format(target, source))
         script.chmod(0o700); subprocess.Popen(["/bin/sh", str(script)], start_new_session=True)
     else: raise ValueError("当前系统暂不支持自动安装")
     return {"ok": True, "message": "更新已下载，应用即将重启"}
