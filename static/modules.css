@@ -81,3 +81,50 @@
   background: var(--brass-soft);
 }
 .planned-investment.due b { color: var(--rust); }
+
+.fund-row {
+  display: grid;
+  grid-template-columns: minmax(210px, 1fr) 118px 130px 125px 145px;
+  gap: 16px;
+  align-items: center;
+}
+.fund-columns {
+  display: grid;
+  grid-template-columns: minmax(210px, 1fr) 118px 130px 125px 145px 190px;
+  gap: 16px;
+  align-items: center;
+  padding: 9px 20px;
+  border: 1px solid var(--rule);
+  border-bottom: 0;
+  background: var(--paper-soft);
+  color: var(--ink-subtle);
+  font: 9px ui-monospace, monospace;
+  letter-spacing: .08em;
+}
+.fund-columns span:nth-child(n+2) { text-align: right; }
+.fund-columns span:last-child { text-align: center; }
+.fund-row.manage-row {
+  grid-template-columns: minmax(210px, 1fr) 118px 130px 125px 145px 190px !important;
+  padding: 15px 20px;
+}
+.fund-chart { display: flex; justify-content: flex-end; }
+.fund-value { min-width: 0 !important; text-align: right; }
+.fund-row .share { line-height: 1.45; }
+.fund-row .share small { display: block; color: inherit; }
+.fund-actions { justify-content: flex-end; gap: 6px; }
+.fund-actions button { padding: 7px 9px; }
+
+@media (max-width: 1120px) {
+  .fund-columns { display: none; }
+  #holdingList2 { overflow-x: auto; }
+  .fund-row.manage-row { min-width: 970px; }
+}
+
+@media (max-width: 850px) {
+  .fund-row:not(.manage-row) {
+    grid-template-columns: minmax(150px, 1fr) 112px !important;
+  }
+  .fund-row:not(.manage-row) .fund-value,
+  .fund-row:not(.manage-row) .planned-investment,
+  .fund-row:not(.manage-row) .share { text-align: left; }
+}

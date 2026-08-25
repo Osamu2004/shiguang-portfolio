@@ -90,8 +90,8 @@ def db():
       per_drop_pct_amount TEXT NOT NULL DEFAULT '0',max_daily_amount TEXT NOT NULL DEFAULT '0',
       updated_at TEXT NOT NULL)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS user_preferences (
-      id INTEGER PRIMARY KEY CHECK(id=1),show_health INTEGER NOT NULL DEFAULT 1,
-      show_coins INTEGER NOT NULL DEFAULT 1,show_research INTEGER NOT NULL DEFAULT 1,
+      id INTEGER PRIMARY KEY CHECK(id=1),show_health INTEGER NOT NULL DEFAULT 0,
+      show_coins INTEGER NOT NULL DEFAULT 0,show_research INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS coins (id TEXT PRIMARY KEY,name TEXT NOT NULL,series TEXT,
       issue_year INTEGER,face_value TEXT NOT NULL DEFAULT '0',material TEXT,image_path TEXT,
@@ -345,7 +345,7 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if self.path == "/api/preferences":
             with db() as conn: row=conn.execute("SELECT * FROM user_preferences WHERE id=1").fetchone()
-            self.json_response(dict(row) if row else {"show_health":1,"show_coins":1,"show_research":1}); return
+            self.json_response(dict(row) if row else {"show_health":0,"show_coins":0,"show_research":0}); return
         if self.path.startswith("/api/holdings/history?"):
             code = re.sub(r"\D", "", urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("code", [""])[0])[:6]
             with db() as conn:
@@ -535,7 +535,7 @@ class Handler(SimpleHTTPRequestHandler):
                 self.json_response({"ok":True}); return
             if self.path == "/api/preferences":
                 raw=self.read_json(); now=datetime.now().isoformat(timespec="seconds")
-                values=tuple(1 if raw.get(key,True) else 0 for key in ("show_health","show_coins","show_research"))
+                values=tuple(1 if raw.get(key,False) else 0 for key in ("show_health","show_coins","show_research"))
                 with db() as conn: conn.execute("INSERT OR REPLACE INTO user_preferences VALUES(1,?,?,?,?)",values+(now,))
                 self.json_response({"ok":True}); return
             if self.path in ("/api/holdings/archive", "/api/holdings/restore"):
