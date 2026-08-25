@@ -1,2 +1,3 @@
 .coin-placeholder{width:108px;height:108px;border:1px solid var(--rule);border-radius:50%;display:grid;place-content:center;text-align:center;background:var(--paper-soft);font:28px Georgia;color:var(--brass-deep)}
 .coin-placeholder small{display:block;margin-top:5px;font-size:8px;color:var(--ink-subtle)}
+.collection-tabs{display:flex;gap:1px;background:var(--rule);border:1px solid var(--rule);margin-bottom:22px}.collection-tabs button{flex:1;border:0;background:var(--card);padding:13px;cursor:pointer}.collection-tabs button.active{background:var(--ink);color:var(--paper)}.collection-panel{display:none}.collection-panel.active{display:block}
