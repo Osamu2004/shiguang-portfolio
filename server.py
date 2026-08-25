@@ -554,7 +554,19 @@ class Handler(SimpleHTTPRequestHandler):
                       (item_id,"NGC",cert,name,int(raw["issue_year"]) if raw.get("issue_year") else None,grade.upper(),
                        str(raw.get("label_type", ""))[:40],money(raw.get("purchase_price",0)),money(raw.get("estimated_value",0)),
                        str(raw.get("storage_location", ""))[:80],str(raw.get("notes", ""))[:500],now))
+                    conn.execute("DELETE FROM deleted_records WHERE table_name='graded_coins' AND record_key=?",(item_id,))
                 self.json_response({"ok":True,"id":item_id}); return
+            if self.path == "/api/graded-coins/delete":
+                cert=str(self.read_json().get("certificate_no", "")).strip()[:80]
+                if not cert: raise ValueError("证书编号不能为空")
+                now=datetime.now().isoformat(timespec="seconds")
+                with db() as conn:
+                    row=conn.execute("SELECT * FROM graded_coins WHERE certificate_no=?",(cert,)).fetchone()
+                    if not row: raise ValueError("NGC 记录不存在")
+                    conn.execute("DELETE FROM graded_coins WHERE certificate_no=?",(cert,))
+                    conn.execute("INSERT OR REPLACE INTO deleted_records VALUES('graded_coins',?,?)",(row["id"],now))
+                    audit(conn,"NGC_COIN_DELETED","删除 NGC 盒币："+cert,{"certificateNo":cert,"previous":dict(row)},now)
+                self.json_response({"ok":True}); return
             if self.path == "/api/scholar/import":
                 raw=self.read_json(); profile=raw.get("profile") or {}; metrics=profile.get("metrics") or {}
                 pid=str(profile.get("id","")).strip()[:80]; name=str(profile.get("name","")).strip()[:120]

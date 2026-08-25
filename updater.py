@@ -16,7 +16,7 @@ from pathlib import Path
 
 import certifi
 
-VERSION = "0.17.2"
+VERSION = "0.17.3"
 REPO = "Osamu2004/shiguang-portfolio"
 SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 

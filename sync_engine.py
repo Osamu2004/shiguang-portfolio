@@ -163,6 +163,8 @@ def import_data(db_path, payload):
                 conn.execute("DELETE FROM holding_snapshots WHERE day=? AND holding_key=?", (day, key))
             if row.get("table_name") == "holdings":
                 conn.execute("DELETE FROM holdings WHERE code=?", (row.get("record_key"),))
+            if row.get("table_name") == "graded_coins":
+                conn.execute("DELETE FROM graded_coins WHERE id=?", (row.get("record_key"),))
         conn.commit()
     finally:
         conn.close()
