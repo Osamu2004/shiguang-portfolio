@@ -38,3 +38,36 @@
 }
 .module-switches input:checked { background: var(--forest); }
 .module-switches input:checked::before { transform: translateX(16px); }
+
+.fund-actions {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  grid-column: auto !important;
+}
+.strategy-panel {
+  position: fixed;
+  z-index: 90;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
+  overflow: auto;
+  margin: 0;
+  padding: 18px;
+  box-shadow: 0 14px 42px #1a171438;
+}
+.strategy-panel[hidden] { display: none; }
+.strategy-panel .card-head h2 { margin: 0; font-size: 19px; }
+
+.fund-sparkline svg { height: 48px; }
+.fund-sparkline .fund-axis,
+.fund-sparkline .fund-tick {
+  stroke: var(--rule);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+.fund-sparkline .fund-axis-label,
+.fund-sparkline .fund-empty-label {
+  fill: var(--ink-subtle);
+  font: 7px ui-monospace, monospace;
+}
+.fund-sparkline .fund-empty-label { font-size: 8px; }
