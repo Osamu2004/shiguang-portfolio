@@ -60,4 +60,16 @@ class SyncTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "GitHub同步连接失败：TLS failed"):
                 vault.download()
 
+    def test_sync_uses_github_cli_credentials(self):
+        with mock.patch.object(sync.shutil, "which", return_value="/usr/local/bin/gh"), \
+             mock.patch.object(sync.Path, "is_file", return_value=True), \
+             mock.patch.object(sync.subprocess, "check_output", return_value="cli-token\n"):
+            self.assertEqual(sync.github_cli_token(), "cli-token")
+
+    def test_missing_github_cli_login_is_readable(self):
+        with mock.patch.object(sync.shutil, "which", return_value=None), \
+             mock.patch.object(sync.Path, "is_file", return_value=False):
+            with self.assertRaisesRegex(ValueError, "gh auth login"):
+                sync.github_cli_token()
+
 if __name__ == "__main__": unittest.main()

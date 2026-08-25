@@ -16,9 +16,8 @@ from pathlib import Path
 
 import certifi
 
-VERSION = "0.7.0"
+VERSION = "0.7.1"
 REPO = "Osamu2004/shiguang-portfolio"
-SERVICE = "shiguang-updates"
 SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 
 
@@ -34,17 +33,7 @@ def _token():
                 return token
         except (OSError, subprocess.SubprocessError):
             continue
-    try:
-        import keyring
-        return keyring.get_password(SERVICE, REPO)
-    except Exception:
-        pass
     return None
-
-
-def store_token(token):
-    import keyring
-    keyring.set_password(SERVICE, REPO, token.strip())
 
 
 def _request(url, token=None):
@@ -56,7 +45,7 @@ def _request(url, token=None):
             return response.read(), response.headers.get("Content-Type", "")
     except urllib.error.HTTPError as exc:
         if exc.code in (401, 403, 404):
-            raise ValueError("无法读取私有更新，请填写具有 Releases 读取权限的 GitHub Token")
+            raise ValueError("无法读取私有更新，请先在终端执行 gh auth login")
         raise ValueError("检查更新失败（HTTP %s）" % exc.code)
     except urllib.error.URLError as exc:
         raise ValueError("更新服务网络连接失败：%s" % (exc.reason or "未知网络错误"))

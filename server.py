@@ -203,9 +203,8 @@ class Handler(SimpleHTTPRequestHandler):
                 self.handle_health_import()
                 return
             if self.path == "/api/sync/config":
-                from sync_engine import save_config, store_token
+                from sync_engine import save_config
                 raw = self.read_json(); config = save_config(raw)
-                if raw.get("token"): store_token(config["repo"], str(raw["token"]))
                 self.json_response({"ok": True, "config": config})
                 return
             if self.path == "/api/sync/run":
@@ -223,9 +222,6 @@ class Handler(SimpleHTTPRequestHandler):
                     conn.execute("INSERT OR REPLACE INTO coins VALUES(?,?,?,?,?,?,?,?,?,?)",(coin_id,name,str(raw.get("series",""))[:60],int(raw["issue_year"]) if raw.get("issue_year") else None,money(raw.get("face_value",0)),str(raw.get("material",""))[:40],None,"self","self-owned",now))
                     conn.execute("INSERT OR REPLACE INTO coin_collection VALUES(?,?,?,?,?,?,?,?)",(coin_id,qty,str(raw.get("grade",""))[:30],money(raw.get("purchase_price",0)),money(raw.get("estimated_value",0)),str(raw.get("storage_location",""))[:80],str(raw.get("notes",""))[:500],now))
                 self.json_response({"ok":True,"id":coin_id}); return
-            if self.path == "/api/update/token":
-                from updater import store_token
-                store_token(str(self.read_json().get("token", ""))); self.json_response({"ok": True}); return
             if self.path == "/api/update/install":
                 from updater import stage_and_install
                 result = stage_and_install(); self.json_response(result)

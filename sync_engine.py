@@ -6,8 +6,10 @@ the device and the GitHub token is delegated to the OS credential store.
 import base64
 import json
 import os
+import shutil
 import sqlite3
 import ssl
+import subprocess
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -26,7 +28,6 @@ SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 MAGIC = "SGV1"
 AAD = b"shiguang-vault-v1"
 ITERATIONS = 600_000
-SERVICE = "shiguang-portfolio"
 
 
 def _key(password, salt, iterations=ITERATIONS):
@@ -177,18 +178,23 @@ def save_config(config):
     return safe
 
 
-def store_token(repo, token):
-    import keyring
-    keyring.set_password(SERVICE, repo, token)
-
-
-def get_token(repo):
-    import keyring
-    return keyring.get_password(SERVICE, repo)
+def github_cli_token():
+    candidates = [shutil.which("gh"), "/opt/homebrew/bin/gh", "/usr/local/bin/gh"]
+    for executable in candidates:
+        if not executable or not Path(executable).is_file():
+            continue
+        try:
+            token = subprocess.check_output([executable, "auth", "token"],
+                stderr=subprocess.DEVNULL, timeout=8, text=True).strip()
+            if token:
+                return token
+        except (OSError, subprocess.SubprocessError):
+            continue
+    raise ValueError("未找到 GitHub 登录凭据，请先在终端执行 gh auth login")
 
 
 def sync(db_path, password, token=None):
-    config = load_config(); token = token or get_token(config["repo"])
+    config = load_config(); token = token or github_cli_token()
     github = GitHubVault(config["repo"], token, config["branch"], config["path"])
     local = export_data(db_path); remote_blob, sha = github.download()
     remote = decrypt_vault(remote_blob, password) if remote_blob else None

@@ -54,8 +54,8 @@ Apple HealthKit 和 Android Health Connect 的自动同步必须由原生手机�
 ## Windows / macOS 加密同步
 
 1. 创建一个与源代码分开的私有仓库，例如 `owner/shiguang-vault`。
-2. 创建 fine-grained GitHub token，仅授予该仓库 Contents 读写权限。
-3. 在应用的“同步”页保存仓库与令牌。令牌进入系统凭据库，不进入SQLite或Git。
+2. 在每台电脑的终端执行 `gh auth login`，登录账号需对数据仓库具有 Contents 读写权限。
+3. 在应用的“同步”页只保存仓库与分支，软件自动读取 GitHub CLI 凭据。
 4. 设定一个非空同步密码，并在两台电脑上使用相同密码。程序不限制长度，但仍建议使用较长的独立密码。
 
 保险库使用 PBKDF2-SHA256（600,000次）派生密钥，再以 AES-256-GCM 认证加密。每次上传都生成新的随机盐和 nonce。GitHub上只存在 `vault.enc`，同步密码不会保存。
@@ -92,7 +92,7 @@ PyInstaller不支持在Linux上交叉构建真正的Windows `.exe` 或macOS `.ap
 
 ### 自动更新
 
-应用启动后会检查私有源码仓库的最新 Release。macOS 已通过 `gh auth login` 登录时会自动复用 GitHub CLI 凭据；否则可在“数据同步 → 软件更新”中保存一个仅授予源码仓库 Contents 读取权限的 fine-grained Token。Token 只进入系统凭据库。更新包必须同时通过 Release 中的 SHA-256 校验，确认后才会替换程序并重启；个人数据库不会被修改。
+应用启动后会检查私有源码仓库的最新 Release，并自动复用 `gh auth login` 的 GitHub CLI 凭据。软件界面不提供 Token 输入框。更新包必须同时通过 Release 中的 SHA-256 校验，确认后才会替换程序并重启；个人数据库不会被修改。
 
 ## 与参考项目的关系
 
