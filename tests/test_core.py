@@ -10,6 +10,15 @@ spec = importlib.util.spec_from_file_location("app", Path(__file__).parents[1] /
 app = importlib.util.module_from_spec(spec); spec.loader.exec_module(app)
 
 class CoreTest(unittest.TestCase):
+    def test_australia_1977_catalog_preserves_supplied_measurements(self):
+        catalog = app.australia_coin_catalog()
+        self.assertEqual(catalog["count"], 6)
+        fifty = next(x for x in catalog["coins"] if x["denomination"] == "50分")
+        self.assertEqual(fifty["reverse_design"], "女王登基银禧纪念图案")
+        self.assertEqual(fifty["diameter_mm"], "31.5")
+        self.assertEqual(fifty["diameter_note"], "十二边形对边")
+        self.assertEqual(fifty["photo_position"], "右下")
+
     def test_database_migrates_existing_fund_strategy_for_drawdown(self):
         with tempfile.TemporaryDirectory() as folder:
             data=Path(folder); path=data/"portfolio.db"

@@ -1,0 +1,14 @@
+{
+  "title": "澳大利亚 1977 年硬币套装",
+  "source": "user-supplied",
+  "verified_at": "2026-08-31",
+  "count": 6,
+  "coins": [
+    {"id":"au-1977-01c","country":"澳大利亚","year":1977,"name":"1 分—羽尾袋鼯","face_value":"0.01","denomination":"1分","reverse_design":"羽尾袋鼯","photo_position":"右上","diameter_mm":"17.65","thickness_mm":"1.5–1.6","shape":"圆形","image_url":"","official_url":""},
+    {"id":"au-1977-02c","country":"澳大利亚","year":1977,"name":"2 分—颈盾蜥","face_value":"0.02","denomination":"2分","reverse_design":"颈盾蜥","photo_position":"上中","diameter_mm":"21.59","thickness_mm":"1.9–2.0","shape":"圆形","image_url":"","official_url":""},
+    {"id":"au-1977-05c","country":"澳大利亚","year":1977,"name":"5 分—针鼹","face_value":"0.05","denomination":"5分","reverse_design":"针鼹","photo_position":"左上","diameter_mm":"19.41","thickness_mm":"1.30","shape":"圆形","image_url":"","official_url":""},
+    {"id":"au-1977-10c","country":"澳大利亚","year":1977,"name":"10 分—琴鸟","face_value":"0.10","denomination":"10分","reverse_design":"琴鸟","photo_position":"左下","diameter_mm":"23.60","thickness_mm":"1.76–2.0","shape":"圆形","image_url":"","official_url":""},
+    {"id":"au-1977-20c","country":"澳大利亚","year":1977,"name":"20 分—鸭嘴兽","face_value":"0.20","denomination":"20分","reverse_design":"鸭嘴兽","photo_position":"下中","diameter_mm":"28.52","thickness_mm":"2.0–2.5","shape":"圆形","image_url":"","official_url":""},
+    {"id":"au-1977-50c","country":"澳大利亚","year":1977,"name":"50 分—女王登基银禧","face_value":"0.50","denomination":"50分","reverse_design":"女王登基银禧纪念图案","photo_position":"右下","diameter_mm":"31.5","diameter_note":"十二边形对边","thickness_mm":"约3.0","shape":"十二边形","image_url":"","official_url":""}
+  ]
+}

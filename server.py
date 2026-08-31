@@ -50,6 +50,10 @@ def china_coin_catalog():
     with (RESOURCES / "china-coin-catalog.json").open(encoding="utf-8") as handle:
         return json.load(handle)
 
+def australia_coin_catalog():
+    with (RESOURCES / "australia-coin-catalog.json").open(encoding="utf-8") as handle:
+        return json.load(handle)
+
 
 def db():
     DATA.mkdir(exist_ok=True)
@@ -559,6 +563,11 @@ class Handler(SimpleHTTPRequestHandler):
             with db() as conn: owned = {r["coin_id"]: dict(r) for r in conn.execute("SELECT * FROM coin_collection")}
             for coin in catalog["coins"]: coin["collection"] = owned.get(coin["id"])
             self.json_response(catalog); return
+        if self.path == "/api/australia-coin-catalog":
+            catalog = australia_coin_catalog()
+            with db() as conn: owned = {r["coin_id"]: dict(r) for r in conn.execute("SELECT * FROM coin_collection")}
+            for coin in catalog["coins"]: coin["collection"] = owned.get(coin["id"])
+            self.json_response(catalog); return
         if self.path == "/api/graded-coins":
             with db() as conn: rows = [dict(r) for r in conn.execute("SELECT * FROM graded_coins ORDER BY issue_year DESC,updated_at DESC")]
             for row in rows:
@@ -772,20 +781,24 @@ class Handler(SimpleHTTPRequestHandler):
                 self.json_response({"ok":True,"id":coin_id}); return
             if self.path == "/api/coin-collection":
                 raw = self.read_json(); coin_id = str(raw.get("coin_id", ""))
-                catalog = euro2_catalog(); china = china_coin_catalog()
+                catalog = euro2_catalog(); china = china_coin_catalog(); australia = australia_coin_catalog()
                 coin = next((x for x in catalog["coins"] if x["id"] == coin_id), None)
-                is_china = False
+                series = None
                 if not coin:
-                    coin = next((x for x in china["coins"] if x["id"] == coin_id), None); is_china = bool(coin)
+                    coin = next((x for x in china["coins"] if x["id"] == coin_id), None)
+                    if coin: series = "中国普通纪念币"
+                if not coin:
+                    coin = next((x for x in australia["coins"] if x["id"] == coin_id), None)
+                    if coin: series = "澳大利亚 1977 年硬币"
                 if not coin: raise ValueError("目录中没有这枚纪念币")
                 qty = int(raw.get("quantity") or 0)
                 if qty < 0: raise ValueError("数量不正确")
                 now = datetime.now().isoformat(timespec="seconds")
                 with db() as conn:
                     conn.execute("INSERT OR IGNORE INTO coins VALUES(?,?,?,?,?,?,?,?,?,?)",
-                                 (coin_id, coin.get("feature") or coin.get("name"), "中国普通纪念币" if is_china else coin["country"], coin["year"],
+                                 (coin_id, coin.get("feature") or coin.get("name"), series or coin.get("country", "2 欧元纪念币"), coin["year"],
                                   str(coin.get("face_value") or "2.00"), coin.get("material") or "双金属", None,
-                                  coin["official_url"], "PBOC reference" if is_china else "ECB official catalogue", now))
+                                  coin.get("official_url", ""), "user supplied catalogue" if series else "ECB official catalogue", now))
                     if qty == 0:
                         conn.execute("DELETE FROM coin_collection WHERE coin_id=?", (coin_id,))
                     else:
