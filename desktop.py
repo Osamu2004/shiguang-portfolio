@@ -13,6 +13,7 @@ elif system == "Windows":
     data_dir = Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "Shiguang"
 else:
     data_dir = Path(os.getenv("XDG_DATA_HOME", str(Path.home() / ".local" / "share"))) / "shiguang"
+data_dir = Path(os.getenv("SHIGUANG_DATA_DIR", str(data_dir)))
 data_dir.mkdir(parents=True, exist_ok=True)
 os.environ["SHIGUANG_DATA_DIR"] = str(data_dir)
 
@@ -21,10 +22,11 @@ from server import Handler, db
 
 def main():
     db().close()
+    port = int(os.getenv("PORT", "8787"))
     try:
-        httpd = ThreadingHTTPServer(("127.0.0.1", 8787), Handler)
+        httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     except OSError:
-        webbrowser.open("http://127.0.0.1:8787")
+        webbrowser.open("http://127.0.0.1:%d" % port)
         return
     url = "http://127.0.0.1:%d" % httpd.server_port
     threading.Thread(target=httpd.serve_forever, daemon=True).start()

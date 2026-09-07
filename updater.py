@@ -37,8 +37,9 @@ def _token():
 
 
 def _request(url, token=None):
+    token = token or _token()
     request = urllib.request.Request(url, headers={"Accept": "application/vnd.github+json",
-        "Authorization": "Bearer " + (token or _token() or ""), "User-Agent": "shiguang-updater",
+        **({"Authorization": "Bearer " + token} if token else {}), "User-Agent": "shiguang-updater",
         "X-GitHub-Api-Version": "2022-11-28"})
     try:
         with urllib.request.urlopen(request, timeout=30, context=SSL_CONTEXT) as response:
@@ -70,7 +71,7 @@ def check(token=None):
 
 def _download(asset, token, target):
     request = urllib.request.Request(asset["url"], headers={"Accept": "application/octet-stream",
-        "Authorization": "Bearer " + token, "User-Agent": "shiguang-updater"})
+        **({"Authorization": "Bearer " + token} if token else {}), "User-Agent": "shiguang-updater"})
     with urllib.request.urlopen(request, timeout=120, context=SSL_CONTEXT) as response, open(target, "wb") as output:
         shutil.copyfileobj(response, output)
 
@@ -106,4 +107,4 @@ def stage_and_install(token=None):
         script.write_text('#!/bin/sh\nsleep 2\nchmod +x "{1}/Contents/MacOS/"* || exit 1\nrm -rf "{0}.old"\nmv "{0}" "{0}.old" || exit 1\ncp -R "{1}" "{0}" || {{ mv "{0}.old" "{0}"; exit 1; }}\nchmod +x "{0}/Contents/MacOS/"*\nxattr -dr com.apple.quarantine "{0}"\nopen "{0}"\n'.format(target, source))
         script.chmod(0o700); subprocess.Popen(["/bin/sh", str(script)], start_new_session=True)
     else: raise ValueError("当前系统暂不支持自动安装")
-    return {"ok": True, "message": "更新已下载，应用即将重启"}
+    return {"ok": True, "restart_required": True, "message": "更新已下载，应用即将重启"}

@@ -11,6 +11,8 @@ import threading
 import time
 import csv
 import io
+import math
+import uuid
 import ssl
 import urllib.error
 import urllib.parse
@@ -56,7 +58,7 @@ def australia_coin_catalog():
 
 
 def db():
-    DATA.mkdir(exist_ok=True)
+    DATA.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB))
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
@@ -156,8 +158,8 @@ def db():
 
 
 def audit(conn, event_type, summary, details=None, now=None):
-    now = now or datetime.now().isoformat(timespec="seconds")
-    event_id = hashlib.sha256((now + event_type + summary).encode()).hexdigest()[:24]
+    now = now or datetime.now().isoformat(timespec="microseconds")
+    event_id = uuid.uuid4().hex
     conn.execute("INSERT INTO audit_logs VALUES(?,?,?,?,?)",
                  (event_id, event_type, summary, json.dumps(details or {}, ensure_ascii=False), now))
 
@@ -165,7 +167,7 @@ def audit(conn, event_type, summary, details=None, now=None):
 def money(value):
     try:
         result = Decimal(str(value).replace(",", "").replace("¥", "").strip())
-        if result < 0 or result > Decimal("100000000000"):
+        if not result.is_finite() or result < 0 or result > Decimal("100000000000"):
             raise ValueError()
         return str(result.quantize(Decimal("0.01")))
     except (InvalidOperation, ValueError):
@@ -175,7 +177,7 @@ def money(value):
 def signed_money(value):
     try:
         result = Decimal(str(value).replace(",", "").replace("¥", "").strip())
-        if abs(result) > Decimal("100000000000"):
+        if not result.is_finite() or abs(result) > Decimal("100000000000"):
             raise ValueError()
         return result.quantize(Decimal("0.01"))
     except (InvalidOperation, ValueError):
@@ -199,8 +201,10 @@ def clean_item(raw):
         reported_rate = Decimal(str(raw["return_rate"]).replace("%", "").strip())
     except InvalidOperation:
         raise ValueError("收益率格式不正确")
-    if reported_rate <= -100:
-        raise ValueError("收益率必须大于 -100%")
+    if not reported_rate.is_finite() or abs(reported_rate) > Decimal("100000000000"):
+        raise ValueError("收益率格式不正确")
+    if reported_rate < -100:
+        raise ValueError("收益率不能低于 -100%")
     rate = reported_rate / 100
     estimated_cost = profit / rate if rate and profit / rate >= 0 else value - profit
     market_value, cost = money(value), money(max(estimated_cost, Decimal("0")))
@@ -426,8 +430,17 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type"); self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS"); self.end_headers()
 
     def translate_path(self, path):
-        clean = path.split("?", 1)[0].lstrip("/") or "index.html"
-        return str(STATIC / clean)
+        # Use the standard handler's URL decoding and traversal normalization,
+        # then enforce confinement even when a static symlink points outside.
+        self.directory = str(STATIC)
+        target = Path(super().translate_path(path)).resolve()
+        if not target.is_relative_to(STATIC.resolve()):
+            return str(STATIC / "__not_found__")
+        return str(target / "index.html" if target == STATIC.resolve() else target)
+
+    def list_directory(self, path):
+        self.send_error(404, "Not found")
+        return None
 
     def json_response(self, payload, status=200):
         data = json.dumps(payload, ensure_ascii=False).encode()
@@ -444,9 +457,12 @@ class Handler(SimpleHTTPRequestHandler):
 
     def read_json(self):
         size = int(self.headers.get("Content-Length", "0"))
-        if size > 1024 * 1024:
+        if size < 0 or size > 1024 * 1024:
             raise ValueError("请求过大")
-        return json.loads(self.rfile.read(size) or b"{}")
+        data = json.loads(self.rfile.read(size) or b"{}")
+        if not isinstance(data, dict):
+            raise ValueError("请求内容必须是 JSON 对象")
+        return data
 
     def do_GET(self):
         if self.path.startswith("/api/funds/lookup?"):
@@ -484,7 +500,7 @@ class Handler(SimpleHTTPRequestHandler):
                 rows = [dict(r) for r in conn.execute("SELECT * FROM holdings WHERE archived_at IS NULL ORDER BY market_value + 0 DESC")]
                 archived = [dict(r) for r in conn.execute("SELECT * FROM holdings WHERE archived_at IS NOT NULL ORDER BY archived_at DESC")]
                 accounts = [dict(r) for r in conn.execute("SELECT * FROM accounts ORDER BY balance + 0 DESC")]
-                snapshots = [dict(r) for r in conn.execute("SELECT * FROM portfolio_snapshots ORDER BY day LIMIT 365")]
+                snapshots = list(reversed([dict(r) for r in conn.execute("SELECT * FROM portfolio_snapshots ORDER BY day DESC LIMIT 365")]))
                 coin_row = conn.execute("SELECT COALESCE(SUM(quantity),0),COALESCE(SUM(estimated_value + 0),0) FROM coin_collection").fetchone()
                 for row in rows:
                     market=conn.execute("SELECT day,unit_nav,cumulative_nav,daily_change_pct FROM fund_market_daily WHERE code=? ORDER BY day DESC LIMIT 1",(row.get("code"),)).fetchone()
@@ -536,6 +552,11 @@ class Handler(SimpleHTTPRequestHandler):
                     "auditLogs": [dict(r) for r in conn.execute("SELECT * FROM audit_logs ORDER BY created_at")],
                     "deletedRecords": [dict(r) for r in conn.execute("SELECT * FROM deleted_records ORDER BY deleted_at")],
                 }
+                for key, table in (("coins", "coins"), ("coinCollection", "coin_collection"),
+                                   ("gradedCoins", "graded_coins"), ("scholarProfiles", "scholar_profiles"),
+                                   ("scholarSnapshots", "scholar_snapshots"), ("scholarPapers", "scholar_papers"),
+                                   ("scholarPaperSnapshots", "scholar_paper_snapshots"), ("scholarSettings", "scholar_settings")):
+                    payload[key] = [dict(r) for r in conn.execute("SELECT * FROM " + table)]
             data = json.dumps(payload, ensure_ascii=False, indent=2).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -607,7 +628,7 @@ class Handler(SimpleHTTPRequestHandler):
         try:
             if self.path == "/api/holdings":
                 item = clean_item(self.read_json())
-                now = datetime.now().isoformat(timespec="seconds")
+                now = datetime.now().isoformat(timespec="microseconds")
                 with db() as conn:
                     existing = conn.execute("SELECT id FROM holdings WHERE code=? OR name=? LIMIT 1",
                                             (item["code"], item["name"])).fetchone()
@@ -636,7 +657,7 @@ class Handler(SimpleHTTPRequestHandler):
                 with db() as conn:
                     codes=[requested] if len(requested)==6 else [r[0] for r in conn.execute(
                       "SELECT DISTINCT code FROM holdings WHERE archived_at IS NULL AND length(code)=6")]
-                updated=0; errors={}; now=datetime.now().isoformat(timespec="seconds"); page_size=10000 if raw.get("full_history") else 120
+                updated=0; errors={}; now=datetime.now().isoformat(timespec="microseconds"); page_size=10000 if raw.get("full_history") else 120
                 with concurrent.futures.ThreadPoolExecutor(max_workers=min(4,max(1,len(codes)))) as pool:
                     futures={pool.submit(fetch_fund_market,code,page_size):code for code in codes}
                     for future in concurrent.futures.as_completed(futures):
@@ -650,7 +671,7 @@ class Handler(SimpleHTTPRequestHandler):
                         except Exception as exc: errors[code]=str(exc) if isinstance(exc,ValueError) else "公开行情读取失败"
                 self.json_response({"ok":True,"updated":updated,"errors":errors}); return
             if self.path == "/api/market/refresh":
-                now=datetime.now().isoformat(timespec="seconds"); updated=0; errors={}
+                now=datetime.now().isoformat(timespec="microseconds"); updated=0; errors={}
                 with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
                     futures={pool.submit(fetch_market_index,code,secid):code for code,_,_,secid in MARKET_INDICES}
                     for future in concurrent.futures.as_completed(futures):
@@ -678,7 +699,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if mode=="drop" and Decimal(per_pct)<=0: raise ValueError("每下跌 1% 的定投金额必须大于 0")
                 if mode=="drawdown" and Decimal(budget)<=0: raise ValueError("回撤资金总额必须大于 0")
                 if mode=="drawdown": drawdown_rules({"drawdown_thresholds":thresholds,"drawdown_allocations":allocations})
-                now=datetime.now().isoformat(timespec="seconds")
+                now=datetime.now().isoformat(timespec="microseconds")
                 with db() as conn:
                     if not conn.execute("SELECT 1 FROM holdings WHERE code=?",(code,)).fetchone(): raise ValueError("未找到该基金")
                     conn.execute("""INSERT OR REPLACE INTO fund_strategies
@@ -687,14 +708,14 @@ class Handler(SimpleHTTPRequestHandler):
                     audit(conn,"FUND_STRATEGY_SAVED","保存基金定投策略："+code,{"mode":mode},now)
                 self.json_response({"ok":True}); return
             if self.path == "/api/preferences":
-                raw=self.read_json(); now=datetime.now().isoformat(timespec="seconds")
+                raw=self.read_json(); now=datetime.now().isoformat(timespec="microseconds")
                 values=tuple(1 if raw.get(key,False) else 0 for key in ("show_health","show_coins","show_research"))
                 with db() as conn: conn.execute("INSERT OR REPLACE INTO user_preferences VALUES(1,?,?,?,?)",values+(now,))
                 self.json_response({"ok":True}); return
             if self.path in ("/api/holdings/archive", "/api/holdings/restore"):
                 code = re.sub(r"\D", "", str(self.read_json().get("code", "")))[:6]
                 if len(code) != 6: raise ValueError("基金代码不正确")
-                now = datetime.now().isoformat(timespec="seconds")
+                now = datetime.now().isoformat(timespec="microseconds")
                 with db() as conn:
                     if self.path.endswith("archive"):
                         changed = conn.execute("UPDATE holdings SET archived_at=?,updated_at=? WHERE code=? AND archived_at IS NULL",
@@ -711,7 +732,7 @@ class Handler(SimpleHTTPRequestHandler):
                 raw = self.read_json(); code = re.sub(r"\D", "", str(raw.get("code", "")))[:6]
                 day = str(raw.get("day", ""))
                 if len(code) != 6 or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day): raise ValueError("历史记录参数不正确")
-                now = datetime.now().isoformat(timespec="seconds")
+                now = datetime.now().isoformat(timespec="microseconds")
                 with db() as conn:
                     old = conn.execute("SELECT * FROM holding_snapshots WHERE holding_key=? AND day=?", (code, day)).fetchone()
                     if not old: raise ValueError("历史记录不存在")
@@ -719,7 +740,7 @@ class Handler(SimpleHTTPRequestHandler):
                     conn.execute("INSERT OR REPLACE INTO deleted_records VALUES('holding_snapshots',?,?)", (day + ":" + code, now))
                     latest = conn.execute("SELECT * FROM holding_snapshots WHERE holding_key=? ORDER BY day DESC LIMIT 1", (code,)).fetchone()
                     if latest:
-                        cost = money(Decimal(latest["market_value"]) - Decimal(latest["holding_profit"]))
+                        cost = clean_item(dict(latest))["cost"]
                         conn.execute("UPDATE holdings SET market_value=?,cost=?,holding_profit=?,return_rate=?,updated_at=? WHERE code=?",
                                      (latest["market_value"], cost, latest["holding_profit"], latest["return_rate"], now, code))
                     else:
@@ -731,7 +752,7 @@ class Handler(SimpleHTTPRequestHandler):
             if self.path == "/api/holdings/delete":
                 code = re.sub(r"\D", "", str(self.read_json().get("code", "")))[:6]
                 if len(code) != 6: raise ValueError("基金代码不正确")
-                now = datetime.now().isoformat(timespec="seconds")
+                now = datetime.now().isoformat(timespec="microseconds")
                 with db() as conn:
                     row = conn.execute("SELECT * FROM holdings WHERE code=?", (code,)).fetchone()
                     if not row: raise ValueError("基金不存在")
@@ -744,7 +765,7 @@ class Handler(SimpleHTTPRequestHandler):
                 self.json_response({"ok": True}); return
             if self.path == "/api/accounts":
                 item = clean_account(self.read_json())
-                now = datetime.now().isoformat(timespec="seconds")
+                now = datetime.now().isoformat(timespec="microseconds")
                 with db() as conn:
                     conn.execute("""INSERT INTO accounts(name,account_type,platform,balance,updated_at)
                       VALUES(?,?,?,?,?) ON CONFLICT(name) DO UPDATE SET account_type=excluded.account_type,
@@ -772,7 +793,7 @@ class Handler(SimpleHTTPRequestHandler):
             if self.path == "/api/coins":
                 raw=self.read_json(); name=str(raw.get("name","")).strip()[:100]
                 if not name: raise ValueError("请填写纪念币名称")
-                coin_id=str(raw.get("id") or hashlib.sha256(name.encode()).hexdigest()[:16]); now=datetime.now().isoformat(timespec="seconds")
+                coin_id=str(raw.get("id") or hashlib.sha256(name.encode()).hexdigest()[:16]); now=datetime.now().isoformat(timespec="microseconds")
                 qty=int(raw.get("quantity") or 0)
                 if qty<0: raise ValueError("数量不正确")
                 with db() as conn:
@@ -793,7 +814,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if not coin: raise ValueError("目录中没有这枚纪念币")
                 qty = int(raw.get("quantity") or 0)
                 if qty < 0: raise ValueError("数量不正确")
-                now = datetime.now().isoformat(timespec="seconds")
+                now = datetime.now().isoformat(timespec="microseconds")
                 with db() as conn:
                     conn.execute("INSERT OR IGNORE INTO coins VALUES(?,?,?,?,?,?,?,?,?,?)",
                                  (coin_id, coin.get("feature") or coin.get("name"), series or coin.get("country", "2 欧元纪念币"), coin["year"],
@@ -801,11 +822,16 @@ class Handler(SimpleHTTPRequestHandler):
                                   coin.get("official_url", ""), "user supplied catalogue" if series else "ECB official catalogue", now))
                     if qty == 0:
                         conn.execute("DELETE FROM coin_collection WHERE coin_id=?", (coin_id,))
+                        conn.execute("INSERT OR REPLACE INTO deleted_records VALUES('coin_collection',?,?)", (coin_id, now))
                     else:
+                        previous = conn.execute("SELECT * FROM coin_collection WHERE coin_id=?", (coin_id,)).fetchone()
+                        fields = dict(previous) if previous else {}
+                        fields.update(raw)
                         conn.execute("INSERT OR REPLACE INTO coin_collection VALUES(?,?,?,?,?,?,?,?)",
-                                     (coin_id, qty, str(raw.get("grade", ""))[:30],
-                                      money(raw.get("purchase_price", 0)), money(raw.get("estimated_value", 0)),
-                                      str(raw.get("storage_location", ""))[:80], str(raw.get("notes", ""))[:500], now))
+                                     (coin_id, qty, str(fields.get("grade", ""))[:30],
+                                      money(fields.get("purchase_price", 0)), money(fields.get("estimated_value", 0)),
+                                      str(fields.get("storage_location", ""))[:80], str(fields.get("notes", ""))[:500], now))
+                        conn.execute("DELETE FROM deleted_records WHERE table_name='coin_collection' AND record_key=?", (coin_id,))
                 self.json_response({"ok": True, "id": coin_id}); return
             if self.path == "/api/graded-coins":
                 raw=self.read_json(); cert=str(raw.get("certificate_no", "")).strip()[:80]
@@ -814,7 +840,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if len(digits)==10: cert=digits[:7]+"-"+digits[7:]
                 if not cert or not grade: raise ValueError("请填写 NGC 证书编号和评级")
                 if not name: name="NGC 证书 "+cert
-                item_id=hashlib.sha256(("NGC:"+cert).encode()).hexdigest()[:20]; now=datetime.now().isoformat(timespec="seconds")
+                item_id=hashlib.sha256(("NGC:"+cert).encode()).hexdigest()[:20]; now=datetime.now().isoformat(timespec="microseconds")
                 with db() as conn:
                     conn.execute("INSERT OR REPLACE INTO graded_coins VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                       (item_id,"NGC",cert,name,int(raw["issue_year"]) if raw.get("issue_year") else None,grade.upper(),
@@ -825,7 +851,7 @@ class Handler(SimpleHTTPRequestHandler):
             if self.path == "/api/graded-coins/delete":
                 cert=str(self.read_json().get("certificate_no", "")).strip()[:80]
                 if not cert: raise ValueError("证书编号不能为空")
-                now=datetime.now().isoformat(timespec="seconds")
+                now=datetime.now().isoformat(timespec="microseconds")
                 with db() as conn:
                     row=conn.execute("SELECT * FROM graded_coins WHERE certificate_no=?",(cert,)).fetchone()
                     if not row: raise ValueError("NGC 记录不存在")
@@ -837,11 +863,11 @@ class Handler(SimpleHTTPRequestHandler):
                 raw=self.read_json(); profile=raw.get("profile") or {}; metrics=profile.get("metrics") or {}
                 pid=str(profile.get("id","")).strip()[:80]; name=str(profile.get("name","")).strip()[:120]
                 if not pid or not name: raise ValueError("科研快照缺少个人主页 ID 或姓名")
-                captured=str(raw.get("capturedAt") or datetime.now().isoformat(timespec="seconds")); day=captured[:10]
+                captured=str(raw.get("capturedAt") or datetime.now().isoformat(timespec="microseconds")); day=captured[:10]
                 def whole(v):
                     try: return max(0,int(v or 0))
                     except (TypeError,ValueError): raise ValueError("引用指标格式不正确")
-                papers=raw.get("papers") or []; now=datetime.now().isoformat(timespec="seconds")
+                papers=raw.get("papers") or []; now=datetime.now().isoformat(timespec="microseconds")
                 with db() as conn:
                     conn.execute("INSERT OR REPLACE INTO scholar_profiles VALUES(?,?,?,?,?,?)",(pid,name,str(profile.get("affiliation", ""))[:200],json.dumps(profile.get("interests") or [],ensure_ascii=False),str(profile.get("url", ""))[:500],now))
                     conn.execute("INSERT OR REPLACE INTO scholar_snapshots VALUES(?,?,?,?,?,?,?,?,?,?)",(pid,day,whole(metrics.get("citationsAll")),whole(metrics.get("citationsRecent")),whole(metrics.get("hIndexAll")),whole(metrics.get("hIndexRecent")),whole(metrics.get("i10All")),whole(metrics.get("i10Recent")),json.dumps(profile.get("yearlyCitations") or {},ensure_ascii=False),captured))
@@ -857,13 +883,15 @@ class Handler(SimpleHTTPRequestHandler):
                 parsed=urllib.parse.urlparse(url); query=urllib.parse.parse_qs(parsed.query)
                 if parsed.scheme!="https" or parsed.hostname!="scholar.google.com" or parsed.path!="/citations" or not query.get("user"):
                     raise ValueError("请输入完整的 Google Scholar 个人主页地址")
-                now=datetime.now().isoformat(timespec="seconds")
+                now=datetime.now().isoformat(timespec="microseconds")
                 with db() as conn: conn.execute("INSERT OR REPLACE INTO scholar_settings VALUES(1,?,?,?)",(url,1 if raw.get("auto_open",True) else 0,now))
                 self.json_response({"ok":True,"profile_url":url}); return
             if self.path == "/api/update/install":
                 from updater import stage_and_install
                 result = stage_and_install(); self.json_response(result)
-                threading.Thread(target=lambda: (time.sleep(1), os._exit(0)), daemon=True).start(); return
+                if result.get("restart_required"):
+                    threading.Thread(target=lambda: (time.sleep(1), os._exit(0)), daemon=True).start()
+                return
             self.json_response({"error": "未知接口"}, 404)
         except Exception as exc:
             self.json_response({"error": str(exc)}, 400)
@@ -901,7 +929,7 @@ def optional_number(value, kind=float, minimum=0, maximum=None):
     if value is None or str(value).strip() == "":
         return None
     number = kind(str(value).strip())
-    if number < minimum or (maximum is not None and number > maximum):
+    if not math.isfinite(number) or number < minimum or (maximum is not None and number > maximum):
         raise ValueError("健康数据超出合理范围")
     return number
 
@@ -939,7 +967,7 @@ def map_health_row(raw):
 
 
 def upsert_health(conn, item):
-    now = datetime.now().isoformat(timespec="seconds")
+    now = datetime.now().isoformat(timespec="microseconds")
     conn.execute("""INSERT OR REPLACE INTO health_daily
       (day,steps,sleep_minutes,resting_heart_rate,active_energy,weight,source,updated_at)
       VALUES(?,?,?,?,?,?,?,?)""", (item["day"], item["steps"], item["sleep_minutes"],

@@ -8,6 +8,8 @@ data/sync-config.json
 build/
 dist/
 *.spec
+.venv/
+qa-output/
 ios/**/DerivedData/
 ios/**/*.xcworkspace/
 ios/**/*.xcodeproj/

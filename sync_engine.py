@@ -94,9 +94,13 @@ def _record_key(table, row):
     return str(row.get("code") or "name:" + row["name"])
 
 
+def _record_stamp(row):
+    return (row.get("updated_at") or row.get("created_at") or row.get("fetched_at")
+            or row.get("captured_at") or row.get("deleted_at") or "")
+
+
 def merge_vaults(local, remote):
-    if not remote:
-        return local
+    remote = remote or {}
     result = {"schemaVersion": 1, "updatedAt": max(local.get("updatedAt", ""), remote.get("updatedAt", "")), "tables": {}}
     for table in ("accounts", "holdings", "holding_snapshots", "fund_market_daily", "market_index_daily", "fund_strategies", "user_preferences", "health_daily", "portfolio_snapshots", "coins", "coin_collection", "graded_coins", "scholar_profiles", "scholar_snapshots", "scholar_papers", "scholar_paper_snapshots", "audit_logs", "deleted_records"):
         merged = {}
@@ -104,11 +108,23 @@ def merge_vaults(local, remote):
             for row in source.get("tables", {}).get(table, []):
                 key = _record_key(table, row)
                 previous = merged.get(key)
-                stamp = row.get("updated_at") or row.get("created_at") or row.get("deleted_at") or source.get("updatedAt", "")
-                old_stamp = (previous or {}).get("updated_at") or (previous or {}).get("created_at") or (previous or {}).get("deleted_at") or ""
+                stamp = _record_stamp(row)
+                old_stamp = _record_stamp(previous or {})
                 if previous is None or stamp >= old_stamp:
                     merged[key] = row
         result["tables"][table] = list(merged.values())
+    # A later recreation supersedes an older deletion. Keep tombstones for
+    # absent records so an offline device cannot resurrect an old copy.
+    tombstones = []
+    for deleted in result["tables"]["deleted_records"]:
+        table, key = deleted["table_name"], deleted["record_key"]
+        rows = result["tables"].get(table, [])
+        record = next((r for r in rows if _record_key(table, r) == key), None)
+        if record and _record_stamp(record) > deleted["deleted_at"]:
+            continue
+        result["tables"][table] = [r for r in rows if _record_key(table, r) != key]
+        tombstones.append(deleted)
+    result["tables"]["deleted_records"] = tombstones
     return result
 
 
@@ -179,11 +195,13 @@ def import_data(db_path, payload):
               ("table_name","record_key","deleted_at")))
             if row.get("table_name") == "holding_snapshots" and ":" in row.get("record_key", ""):
                 day, key = row["record_key"].split(":", 1)
-                conn.execute("DELETE FROM holding_snapshots WHERE day=? AND holding_key=?", (day, key))
+                conn.execute("DELETE FROM holding_snapshots WHERE day=? AND holding_key=? AND created_at<=?", (day, key, row["deleted_at"]))
             if row.get("table_name") == "holdings":
-                conn.execute("DELETE FROM holdings WHERE code=?", (row.get("record_key"),))
+                conn.execute("DELETE FROM holdings WHERE (code=? OR (code IS NULL AND 'name:' || name=?)) AND updated_at<=?", (row["record_key"], row["record_key"], row["deleted_at"]))
             if row.get("table_name") == "graded_coins":
-                conn.execute("DELETE FROM graded_coins WHERE id=?", (row.get("record_key"),))
+                conn.execute("DELETE FROM graded_coins WHERE id=? AND updated_at<=?", (row["record_key"], row["deleted_at"]))
+            if row.get("table_name") == "coin_collection":
+                conn.execute("DELETE FROM coin_collection WHERE coin_id=? AND updated_at<=?", (row["record_key"], row["deleted_at"]))
         conn.commit()
     finally:
         conn.close()

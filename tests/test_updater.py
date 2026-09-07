@@ -8,6 +8,14 @@ updater = importlib.util.module_from_spec(spec); spec.loader.exec_module(updater
 
 
 class UpdaterTest(unittest.TestCase):
+    def test_public_update_does_not_send_empty_bearer_token(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b'{}'
+        with mock.patch.object(updater, "_token", return_value=None), \
+             mock.patch.object(updater.urllib.request, "urlopen", return_value=response) as opened:
+            updater._request("https://api.github.com/repos/example/app/releases/latest")
+        self.assertIsNone(opened.call_args.args[0].get_header("Authorization"))
+
     def test_semantic_versions_are_compared_numerically(self):
         self.assertGreater(updater._version_tuple("v0.10.0"), updater._version_tuple("0.9.9"))
 

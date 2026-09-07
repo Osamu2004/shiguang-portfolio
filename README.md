@@ -29,9 +29,10 @@
 
 ## 本地运行
 
-只需 Python 3.8+，无第三方依赖：
+使用 Python 3.12，先安装项目依赖：
 
 ```bash
+python3 -m pip install -r requirements-desktop.txt
 python3 server.py
 ```
 
