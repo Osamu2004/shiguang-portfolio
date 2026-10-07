@@ -53,7 +53,7 @@ class RegressionTest(unittest.TestCase):
         item = server.clean_item({"name": "测试", "market_value": "0", "holding_profit": "-100", "return_rate": "-100"})
         self.assertEqual(item["cost"], "100.00")
 
-    def test_backup_includes_collection_and_research_tables(self):
+    def test_backup_includes_research_and_retired_archive(self):
         handler = server.Handler.__new__(server.Handler)
         handler.path = "/api/export"
         handler.wfile = io.BytesIO()
@@ -62,7 +62,7 @@ class RegressionTest(unittest.TestCase):
         handler.end_headers = lambda: None
         handler.do_GET()
         payload = json.loads(handler.wfile.getvalue())
-        for key in ("coins", "coinCollection", "gradedCoins", "scholarProfiles", "scholarSnapshots", "scholarPapers", "scholarPaperSnapshots", "scholarSettings"):
+        for key in ("legacyArchive", "scholarProfiles", "scholarSnapshots", "scholarPapers", "scholarPaperSnapshots", "scholarSettings"):
             self.assertIn(key, payload)
 
     def test_static_path_stays_inside_static_directory(self):
@@ -77,31 +77,37 @@ class RegressionTest(unittest.TestCase):
             self.assertEqual(status, 400)
             self.assertIn("JSON 对象", data["error"])
 
-    def test_quantity_edit_preserves_cost_and_notes_and_deletion_syncs(self):
-        coin_id = server.china_coin_catalog()["coins"][0]["id"]
-        status, data = self.post("/api/coin-collection", {
-            "coin_id": coin_id, "quantity": 1, "purchase_price": "123", "notes": "测试备注"})
-        self.assertEqual(status, 200, data)
-        status, data = self.post("/api/coin-collection", {"coin_id": coin_id, "quantity": 2})
-        self.assertEqual(status, 200, data)
+    def test_removed_routes_and_old_tables_are_retained(self):
+        status, data = self.post("/api/coin-collection", {"coin_id": "old", "quantity": 1})
+        self.assertEqual(status, 404)
         with server.db() as conn:
-            row = conn.execute("SELECT * FROM coin_collection").fetchone()
-            self.assertEqual(row["purchase_price"], "123.00")
-            self.assertEqual(row["notes"], "测试备注")
-        old = sync_engine.export_data(server.DB)
-        self.assertEqual(self.post("/api/coin-collection", {"coin_id": coin_id, "quantity": 0})[0], 200)
-        merged = sync_engine.merge_vaults(sync_engine.export_data(server.DB), old)
+            self.assertNotIn("coins", {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")})
+            conn.execute("CREATE TABLE coins (id TEXT PRIMARY KEY, name TEXT, updated_at TEXT)")
+            conn.execute("INSERT INTO coins VALUES ('old', '旧藏品', '2026-09-01')")
+        with server.db() as conn:
+            self.assertEqual(conn.execute("SELECT name FROM coins WHERE id='old'").fetchone()[0], "旧藏品")
+        archive = sync_engine.export_data(server.DB)
+        self.assertEqual(archive["tables"]["coins"][0]["name"], "旧藏品")
+        self.assertEqual(sync_engine.merge_vaults({"tables": {}}, archive)["tables"]["coins"][0]["id"], "old")
+        sync_engine.import_data(server.DB, archive)
+        with server.db() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM coins").fetchone()[0], 1)
+
+    def test_old_preference_column_is_ignored(self):
+        with server.db() as conn:
+            conn.execute("ALTER TABLE user_preferences ADD COLUMN show_coins INTEGER NOT NULL DEFAULT 1")
+        status, _ = self.post("/api/preferences", {"show_health": True, "show_research": False})
+        self.assertEqual(status, 200)
+        synced = sync_engine.export_data(server.DB)["tables"]["user_preferences"][0]
+        self.assertEqual(synced["show_health"], 1)
+        self.assertNotIn("show_coins", synced)
+        remote = {"tables": {"user_preferences": [{"id": 1, "show_health": 0,
+                  "show_research": 1, "show_coins": 1, "updated_at": "2099-01-01"}]}}
+        merged = sync_engine.merge_vaults({"tables": {}}, remote)
         sync_engine.import_data(server.DB, merged)
         with server.db() as conn:
-            self.assertEqual(conn.execute("SELECT COUNT(*) FROM coin_collection").fetchone()[0], 0)
-
-    def test_recreation_wins_over_older_tombstone(self):
-        local = {"tables": {"coin_collection": [{"coin_id": "a", "quantity": 2, "updated_at": "2026-09-07"}]}}
-        remote = {"tables": {"deleted_records": [{"table_name": "coin_collection", "record_key": "a", "deleted_at": "2026-09-06"}]}}
-        for first, second in ((local, remote), (remote, local)):
-            merged = sync_engine.merge_vaults(first, second)
-            self.assertEqual(len(merged["tables"]["coin_collection"]), 1)
-            self.assertEqual(merged["tables"]["deleted_records"], [])
+            row = conn.execute("SELECT show_health,show_research FROM user_preferences").fetchone()
+            self.assertEqual(tuple(row), (0, 1))
 
     def test_market_merge_uses_fetch_time_not_export_time(self):
         old = {"updatedAt": "2026-09-09", "tables": {"fund_market_daily": [{"code": "1", "day": "2026-09-01", "unit_nav": "1", "fetched_at": "2026-09-01"}]}}

@@ -16,7 +16,7 @@ const assert = require('node:assert/strict');
     await page.setViewportSize({ width, height: 900 });
     await page.goto('http://127.0.0.1:18787');
     await page.waitForFunction(() => document.querySelector('#holdingList .fund-row'));
-    for (const id of ['dashboard', 'holdings', 'health', 'coins', 'research', 'manage', 'sync', 'market']) {
+    for (const id of ['dashboard', 'holdings', 'health', 'research', 'manage', 'sync', 'market']) {
       await page.evaluate(id => go(id), id);
       if (!await page.locator('#' + id).count()) continue;
       const layout = await page.evaluate(() => ({

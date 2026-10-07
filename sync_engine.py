@@ -28,6 +28,21 @@ SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 MAGIC = "SGV1"
 AAD = b"shiguang-vault-v1"
 ITERATIONS = 600_000
+# Retired records remain in old local databases and encrypted vaults so a
+# software update never discards the user's previous collection history.
+RETIRED_TABLE_KEYS = {"coins": "id", "coin_collection": "coin_id", "graded_coins": "id"}
+SYNC_TABLES = ("accounts", "holdings", "holding_snapshots", "fund_market_daily", "market_index_daily",
+               "fund_strategies", "user_preferences", "health_daily", "portfolio_snapshots",
+               "scholar_profiles", "scholar_snapshots", "scholar_papers", "scholar_paper_snapshots",
+               "audit_logs", "deleted_records")
+
+
+def retired_data(conn):
+    result = {}
+    for name in RETIRED_TABLE_KEYS:
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone():
+            result[name] = [dict(row) for row in conn.execute("SELECT * FROM " + name)]
+    return result
 
 
 def _key(password, salt, iterations=ITERATIONS):
@@ -68,9 +83,13 @@ def export_data(db_path):
     conn = sqlite3.connect(str(db_path)); conn.row_factory = sqlite3.Row
     try:
         tables = {}
-        for name in ("accounts", "holdings", "holding_snapshots", "fund_market_daily", "market_index_daily", "fund_strategies", "user_preferences", "health_daily", "portfolio_snapshots", "coins", "coin_collection", "graded_coins", "scholar_profiles", "scholar_snapshots", "scholar_papers", "scholar_paper_snapshots", "audit_logs", "deleted_records"):
-            exists = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
-            tables[name] = [dict(r) for r in conn.execute("SELECT * FROM " + name)] if exists else []
+        for name in SYNC_TABLES:
+            if name == "user_preferences":
+                tables[name] = [dict(r) for r in conn.execute(
+                    "SELECT id,show_health,show_research,updated_at FROM user_preferences")]
+            else:
+                tables[name] = [dict(r) for r in conn.execute("SELECT * FROM " + name)]
+        tables.update(retired_data(conn))
         return {"schemaVersion": 1, "updatedAt": datetime.now(timezone.utc).isoformat(), "tables": tables}
     finally:
         conn.close()
@@ -83,12 +102,11 @@ def _record_key(table, row):
     if table in ("fund_market_daily", "market_index_daily"): return str(row["code"]) + ":" + str(row["day"])
     if table == "fund_strategies": return str(row["code"])
     if table == "user_preferences": return str(row["id"])
-    if table in ("coins", "graded_coins"): return str(row["id"])
+    if table in RETIRED_TABLE_KEYS: return str(row[RETIRED_TABLE_KEYS[table]])
     if table == "scholar_profiles": return str(row["profile_id"])
     if table == "scholar_snapshots": return str(row["profile_id"])+":"+str(row["day"])
     if table == "scholar_papers": return str(row["profile_id"])+":"+str(row["paper_id"])
     if table == "scholar_paper_snapshots": return str(row["profile_id"])+":"+str(row["paper_id"])+":"+str(row["day"])
-    if table == "coin_collection": return str(row["coin_id"])
     if table == "audit_logs": return str(row["id"])
     if table == "deleted_records": return str(row["table_name"]) + ":" + str(row["record_key"])
     return str(row.get("code") or "name:" + row["name"])
@@ -102,10 +120,12 @@ def _record_stamp(row):
 def merge_vaults(local, remote):
     remote = remote or {}
     result = {"schemaVersion": 1, "updatedAt": max(local.get("updatedAt", ""), remote.get("updatedAt", "")), "tables": {}}
-    for table in ("accounts", "holdings", "holding_snapshots", "fund_market_daily", "market_index_daily", "fund_strategies", "user_preferences", "health_daily", "portfolio_snapshots", "coins", "coin_collection", "graded_coins", "scholar_profiles", "scholar_snapshots", "scholar_papers", "scholar_paper_snapshots", "audit_logs", "deleted_records"):
+    for table in (*SYNC_TABLES, *RETIRED_TABLE_KEYS):
         merged = {}
         for source in (remote, local):
             for row in source.get("tables", {}).get(table, []):
+                if table == "user_preferences":
+                    row = {key: row[key] for key in ("id", "show_health", "show_research", "updated_at") if key in row}
                 key = _record_key(table, row)
                 previous = merged.get(key)
                 stamp = _record_stamp(row)
@@ -164,21 +184,15 @@ def import_data(db_path, payload):
               row.get("max_daily_amount","0"),row.get("drawdown_budget","0"),row.get("executed_drawdown_stage",0),
               row.get("drawdown_thresholds","10,20,35,50"),row.get("drawdown_allocations","20,20,30,30"),row.get("updated_at")))
         for row in payload["tables"].get("user_preferences", []):
-            conn.execute("INSERT OR REPLACE INTO user_preferences VALUES(?,?,?,?,?)", tuple(row.get(k) for k in
-              ("id","show_health","show_coins","show_research","updated_at")))
+            conn.execute("""INSERT OR REPLACE INTO user_preferences
+              (id,show_health,show_research,updated_at) VALUES(?,?,?,?)""", tuple(row.get(k) for k in
+              ("id","show_health","show_research","updated_at")))
         for row in payload["tables"].get("health_daily", []):
             conn.execute("INSERT OR REPLACE INTO health_daily VALUES(?,?,?,?,?,?,?,?)", tuple(row.get(k) for k in
               ("day","steps","sleep_minutes","resting_heart_rate","active_energy","weight","source","updated_at")))
         for row in payload["tables"].get("portfolio_snapshots", []):
             conn.execute("INSERT OR REPLACE INTO portfolio_snapshots VALUES(?,?,?,?)", tuple(row.get(k) for k in
               ("day","market_value","source","created_at")))
-        for row in payload["tables"].get("coins", []):
-            conn.execute("INSERT OR REPLACE INTO coins VALUES(?,?,?,?,?,?,?,?,?,?)",tuple(row.get(k) for k in ("id","name","series","issue_year","face_value","material","image_path","image_source","image_license","updated_at")))
-        for row in payload["tables"].get("coin_collection", []):
-            conn.execute("INSERT OR REPLACE INTO coin_collection VALUES(?,?,?,?,?,?,?,?)",tuple(row.get(k) for k in ("coin_id","quantity","grade","purchase_price","estimated_value","storage_location","notes","updated_at")))
-        for row in payload["tables"].get("graded_coins", []):
-            conn.execute("INSERT OR REPLACE INTO graded_coins VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", tuple(row.get(k) for k in
-              ("id","grading_company","certificate_no","coin_name","issue_year","grade","label_type","purchase_price","estimated_value","storage_location","notes","updated_at")))
         for row in payload["tables"].get("scholar_profiles", []):
             conn.execute("INSERT OR REPLACE INTO scholar_profiles VALUES(?,?,?,?,?,?)",tuple(row.get(k) for k in ("profile_id","name","affiliation","interests","profile_url","updated_at")))
         for row in payload["tables"].get("scholar_snapshots", []):
@@ -198,10 +212,6 @@ def import_data(db_path, payload):
                 conn.execute("DELETE FROM holding_snapshots WHERE day=? AND holding_key=? AND created_at<=?", (day, key, row["deleted_at"]))
             if row.get("table_name") == "holdings":
                 conn.execute("DELETE FROM holdings WHERE (code=? OR (code IS NULL AND 'name:' || name=?)) AND updated_at<=?", (row["record_key"], row["record_key"], row["deleted_at"]))
-            if row.get("table_name") == "graded_coins":
-                conn.execute("DELETE FROM graded_coins WHERE id=? AND updated_at<=?", (row["record_key"], row["deleted_at"]))
-            if row.get("table_name") == "coin_collection":
-                conn.execute("DELETE FROM coin_collection WHERE coin_id=? AND updated_at<=?", (row["record_key"], row["deleted_at"]))
         conn.commit()
     finally:
         conn.close()

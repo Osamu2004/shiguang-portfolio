@@ -41,7 +41,7 @@ class SyncTest(unittest.TestCase):
         merged = sync.merge_vaults(active, archived)
         self.assertEqual(merged["tables"]["holdings"][0]["archived_at"], "2026-02-01")
 
-    def test_coin_metadata_is_merged(self):
+    def test_retired_metadata_is_preserved_in_encrypted_vault(self):
         local={"updatedAt":"2","tables":{"coins":[{"id":"coin-1","name":"A","updated_at":"2"}]}}
         merged=sync.merge_vaults(local,{"updatedAt":"1","tables":{}})
         self.assertEqual(merged["tables"]["coins"][0]["id"],"coin-1")
@@ -86,6 +86,7 @@ class SyncTest(unittest.TestCase):
         local={"updatedAt":"2","tables":{"user_preferences":[{"id":1,"show_health":0,"show_coins":1,"show_research":0,"updated_at":"2"}]}}
         merged=sync.merge_vaults(local,{"updatedAt":"1","tables":{}})
         self.assertEqual(merged["tables"]["user_preferences"][0]["show_health"],0)
+        self.assertNotIn("show_coins", merged["tables"]["user_preferences"][0])
 
     def test_deleted_snapshot_tombstone_is_synchronized(self):
         local={"updatedAt":"2","tables":{"deleted_records":[

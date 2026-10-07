@@ -43,20 +43,6 @@ MARKET_INDICES = (
 )
 
 
-def euro2_catalog():
-    path = RESOURCES / "euro2-catalog.json"
-    with path.open(encoding="utf-8") as handle:
-        return json.load(handle)
-
-def china_coin_catalog():
-    with (RESOURCES / "china-coin-catalog.json").open(encoding="utf-8") as handle:
-        return json.load(handle)
-
-def australia_coin_catalog():
-    with (RESOURCES / "australia-coin-catalog.json").open(encoding="utf-8") as handle:
-        return json.load(handle)
-
-
 def db():
     DATA.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB))
@@ -120,20 +106,7 @@ def db():
         conn.execute("ALTER TABLE fund_strategies ADD COLUMN drawdown_allocations TEXT NOT NULL DEFAULT '20,20,30,30'")
     conn.execute("""CREATE TABLE IF NOT EXISTS user_preferences (
       id INTEGER PRIMARY KEY CHECK(id=1),show_health INTEGER NOT NULL DEFAULT 0,
-      show_coins INTEGER NOT NULL DEFAULT 0,show_research INTEGER NOT NULL DEFAULT 0,
-      updated_at TEXT NOT NULL)""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS coins (id TEXT PRIMARY KEY,name TEXT NOT NULL,series TEXT,
-      issue_year INTEGER,face_value TEXT NOT NULL DEFAULT '0',material TEXT,image_path TEXT,
-      image_source TEXT,image_license TEXT,updated_at TEXT NOT NULL)""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS coin_collection (coin_id TEXT PRIMARY KEY,quantity INTEGER NOT NULL,
-      grade TEXT,purchase_price TEXT NOT NULL,estimated_value TEXT NOT NULL,storage_location TEXT,notes TEXT,
-      updated_at TEXT NOT NULL,FOREIGN KEY(coin_id) REFERENCES coins(id))""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS graded_coins (
-      id TEXT PRIMARY KEY, grading_company TEXT NOT NULL, certificate_no TEXT NOT NULL UNIQUE,
-      coin_name TEXT NOT NULL, issue_year INTEGER, grade TEXT NOT NULL, label_type TEXT,
-      purchase_price TEXT NOT NULL DEFAULT '0', estimated_value TEXT NOT NULL DEFAULT '0',
-      storage_location TEXT, notes TEXT, updated_at TEXT NOT NULL)""")
-    conn.execute("UPDATE graded_coins SET grading_company='NGC' WHERE grading_company='GCA'")
+      show_research INTEGER NOT NULL DEFAULT 0,updated_at TEXT NOT NULL)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS scholar_profiles (
       profile_id TEXT PRIMARY KEY,name TEXT NOT NULL,affiliation TEXT,interests TEXT,profile_url TEXT,updated_at TEXT NOT NULL)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS scholar_snapshots (
@@ -473,8 +446,8 @@ class Handler(SimpleHTTPRequestHandler):
                 self.json_response({"error": str(exc)}, 404)
             return
         if self.path == "/api/preferences":
-            with db() as conn: row=conn.execute("SELECT * FROM user_preferences WHERE id=1").fetchone()
-            self.json_response(dict(row) if row else {"show_health":0,"show_coins":0,"show_research":0}); return
+            with db() as conn: row=conn.execute("SELECT show_health,show_research FROM user_preferences WHERE id=1").fetchone()
+            self.json_response(dict(row) if row else {"show_health":0,"show_research":0}); return
         if self.path.startswith("/api/holdings/history?"):
             code = re.sub(r"\D", "", urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("code", [""])[0])[:6]
             with db() as conn:
@@ -501,7 +474,6 @@ class Handler(SimpleHTTPRequestHandler):
                 archived = [dict(r) for r in conn.execute("SELECT * FROM holdings WHERE archived_at IS NOT NULL ORDER BY archived_at DESC")]
                 accounts = [dict(r) for r in conn.execute("SELECT * FROM accounts ORDER BY balance + 0 DESC")]
                 snapshots = list(reversed([dict(r) for r in conn.execute("SELECT * FROM portfolio_snapshots ORDER BY day DESC LIMIT 365")]))
-                coin_row = conn.execute("SELECT COALESCE(SUM(quantity),0),COALESCE(SUM(estimated_value + 0),0) FROM coin_collection").fetchone()
                 for row in rows:
                     market=conn.execute("SELECT day,unit_nav,cumulative_nav,daily_change_pct FROM fund_market_daily WHERE code=? ORDER BY day DESC LIMIT 1",(row.get("code"),)).fetchone()
                     market_data=dict(market) if market else None
@@ -519,8 +491,7 @@ class Handler(SimpleHTTPRequestHandler):
             reported_profit = sum(Decimal(r["holding_profit"]) for r in rows)
             self.json_response({"holdings": rows, "archivedHoldings": archived, "accounts": accounts, "total": str(total + account_total),
                 "fundTotal": str(total), "accountTotal": str(account_total), "totalCost": str(total_cost),
-                "profit": str(reported_profit), "snapshots": snapshots,
-                "coins": {"quantity": coin_row[0], "value": str(coin_row[1])}})
+                "profit": str(reported_profit), "snapshots": snapshots})
             return
         if self.path == "/api/manage":
             with db() as conn:
@@ -546,16 +517,19 @@ class Handler(SimpleHTTPRequestHandler):
                     "fundMarketDaily": [dict(r) for r in conn.execute("SELECT * FROM fund_market_daily ORDER BY day,code")],
                     "marketIndexDaily": [dict(r) for r in conn.execute("SELECT * FROM market_index_daily ORDER BY day,code")],
                     "fundStrategies": [dict(r) for r in conn.execute("SELECT * FROM fund_strategies ORDER BY code")],
-                    "userPreferences": [dict(r) for r in conn.execute("SELECT * FROM user_preferences ORDER BY id")],
+                    "userPreferences": [dict(r) for r in conn.execute("SELECT id,show_health,show_research,updated_at FROM user_preferences ORDER BY id")],
                     "healthDaily": [dict(r) for r in conn.execute("SELECT * FROM health_daily ORDER BY day")],
                     "portfolioSnapshots": [dict(r) for r in conn.execute("SELECT * FROM portfolio_snapshots ORDER BY day")],
                     "auditLogs": [dict(r) for r in conn.execute("SELECT * FROM audit_logs ORDER BY created_at")],
                     "deletedRecords": [dict(r) for r in conn.execute("SELECT * FROM deleted_records ORDER BY deleted_at")],
                 }
-                for key, table in (("coins", "coins"), ("coinCollection", "coin_collection"),
-                                   ("gradedCoins", "graded_coins"), ("scholarProfiles", "scholar_profiles"),
-                                   ("scholarSnapshots", "scholar_snapshots"), ("scholarPapers", "scholar_papers"),
-                                   ("scholarPaperSnapshots", "scholar_paper_snapshots"), ("scholarSettings", "scholar_settings")):
+                from sync_engine import retired_data
+                payload["legacyArchive"] = retired_data(conn)
+                for key, table in (("scholarProfiles", "scholar_profiles"),
+                                   ("scholarSnapshots", "scholar_snapshots"),
+                                   ("scholarPapers", "scholar_papers"),
+                                   ("scholarPaperSnapshots", "scholar_paper_snapshots"),
+                                   ("scholarSettings", "scholar_settings")):
                     payload[key] = [dict(r) for r in conn.execute("SELECT * FROM " + table)]
             data = json.dumps(payload, ensure_ascii=False, indent=2).encode()
             self.send_response(200)
@@ -568,34 +542,6 @@ class Handler(SimpleHTTPRequestHandler):
             from sync_engine import load_config
             self.json_response(load_config())
             return
-        if self.path == "/api/coins":
-            with db() as conn:
-                rows=[dict(r) for r in conn.execute("SELECT c.*,x.quantity,x.grade,x.purchase_price,x.estimated_value,x.storage_location,x.notes FROM coins c LEFT JOIN coin_collection x ON x.coin_id=c.id ORDER BY c.issue_year DESC")]
-            self.json_response({"coins":rows}); return
-        if self.path == "/api/coin-catalog":
-            catalog = euro2_catalog()
-            with db() as conn:
-                owned = {r["coin_id"]: dict(r) for r in conn.execute("SELECT * FROM coin_collection")}
-            for coin in catalog["coins"]:
-                coin["collection"] = owned.get(coin["id"])
-            self.json_response(catalog); return
-        if self.path == "/api/china-coin-catalog":
-            catalog = china_coin_catalog()
-            with db() as conn: owned = {r["coin_id"]: dict(r) for r in conn.execute("SELECT * FROM coin_collection")}
-            for coin in catalog["coins"]: coin["collection"] = owned.get(coin["id"])
-            self.json_response(catalog); return
-        if self.path == "/api/australia-coin-catalog":
-            catalog = australia_coin_catalog()
-            with db() as conn: owned = {r["coin_id"]: dict(r) for r in conn.execute("SELECT * FROM coin_collection")}
-            for coin in catalog["coins"]: coin["collection"] = owned.get(coin["id"])
-            self.json_response(catalog); return
-        if self.path == "/api/graded-coins":
-            with db() as conn: rows = [dict(r) for r in conn.execute("SELECT * FROM graded_coins ORDER BY issue_year DESC,updated_at DESC")]
-            for row in rows:
-                score="".join(ch for ch in row["grade"] if ch.isdigit())
-                row["verify_url"]="https://www.ngccoin.com/certlookup/%s/%s/" % (
-                    urllib.parse.quote(row["certificate_no"]), urllib.parse.quote(score or row["grade"]))
-            self.json_response({"coins": rows}); return
         if self.path == "/api/scholar":
             with db() as conn:
                 profile = conn.execute("SELECT * FROM scholar_profiles ORDER BY updated_at DESC LIMIT 1").fetchone()
@@ -709,8 +655,8 @@ class Handler(SimpleHTTPRequestHandler):
                 self.json_response({"ok":True}); return
             if self.path == "/api/preferences":
                 raw=self.read_json(); now=datetime.now().isoformat(timespec="microseconds")
-                values=tuple(1 if raw.get(key,False) else 0 for key in ("show_health","show_coins","show_research"))
-                with db() as conn: conn.execute("INSERT OR REPLACE INTO user_preferences VALUES(1,?,?,?,?)",values+(now,))
+                values=tuple(1 if raw.get(key,False) else 0 for key in ("show_health","show_research"))
+                with db() as conn: conn.execute("INSERT OR REPLACE INTO user_preferences (id,show_health,show_research,updated_at) VALUES(1,?,?,?)",values+(now,))
                 self.json_response({"ok":True}); return
             if self.path in ("/api/holdings/archive", "/api/holdings/restore"):
                 code = re.sub(r"\D", "", str(self.read_json().get("code", "")))[:6]
@@ -790,75 +736,6 @@ class Handler(SimpleHTTPRequestHandler):
                 password = str(self.read_json().get("password", ""))
                 self.json_response(sync(DB, password))
                 return
-            if self.path == "/api/coins":
-                raw=self.read_json(); name=str(raw.get("name","")).strip()[:100]
-                if not name: raise ValueError("请填写纪念币名称")
-                coin_id=str(raw.get("id") or hashlib.sha256(name.encode()).hexdigest()[:16]); now=datetime.now().isoformat(timespec="microseconds")
-                qty=int(raw.get("quantity") or 0)
-                if qty<0: raise ValueError("数量不正确")
-                with db() as conn:
-                    conn.execute("INSERT OR REPLACE INTO coins VALUES(?,?,?,?,?,?,?,?,?,?)",(coin_id,name,str(raw.get("series",""))[:60],int(raw["issue_year"]) if raw.get("issue_year") else None,money(raw.get("face_value",0)),str(raw.get("material",""))[:40],None,"self","self-owned",now))
-                    conn.execute("INSERT OR REPLACE INTO coin_collection VALUES(?,?,?,?,?,?,?,?)",(coin_id,qty,str(raw.get("grade",""))[:30],money(raw.get("purchase_price",0)),money(raw.get("estimated_value",0)),str(raw.get("storage_location",""))[:80],str(raw.get("notes",""))[:500],now))
-                self.json_response({"ok":True,"id":coin_id}); return
-            if self.path == "/api/coin-collection":
-                raw = self.read_json(); coin_id = str(raw.get("coin_id", ""))
-                catalog = euro2_catalog(); china = china_coin_catalog(); australia = australia_coin_catalog()
-                coin = next((x for x in catalog["coins"] if x["id"] == coin_id), None)
-                series = None
-                if not coin:
-                    coin = next((x for x in china["coins"] if x["id"] == coin_id), None)
-                    if coin: series = "中国普通纪念币"
-                if not coin:
-                    coin = next((x for x in australia["coins"] if x["id"] == coin_id), None)
-                    if coin: series = "澳大利亚 1977 年硬币"
-                if not coin: raise ValueError("目录中没有这枚纪念币")
-                qty = int(raw.get("quantity") or 0)
-                if qty < 0: raise ValueError("数量不正确")
-                now = datetime.now().isoformat(timespec="microseconds")
-                with db() as conn:
-                    conn.execute("INSERT OR IGNORE INTO coins VALUES(?,?,?,?,?,?,?,?,?,?)",
-                                 (coin_id, coin.get("feature") or coin.get("name"), series or coin.get("country", "2 欧元纪念币"), coin["year"],
-                                  str(coin.get("face_value") or "2.00"), coin.get("material") or "双金属", None,
-                                  coin.get("official_url", ""), "user supplied catalogue" if series else "ECB official catalogue", now))
-                    if qty == 0:
-                        conn.execute("DELETE FROM coin_collection WHERE coin_id=?", (coin_id,))
-                        conn.execute("INSERT OR REPLACE INTO deleted_records VALUES('coin_collection',?,?)", (coin_id, now))
-                    else:
-                        previous = conn.execute("SELECT * FROM coin_collection WHERE coin_id=?", (coin_id,)).fetchone()
-                        fields = dict(previous) if previous else {}
-                        fields.update(raw)
-                        conn.execute("INSERT OR REPLACE INTO coin_collection VALUES(?,?,?,?,?,?,?,?)",
-                                     (coin_id, qty, str(fields.get("grade", ""))[:30],
-                                      money(fields.get("purchase_price", 0)), money(fields.get("estimated_value", 0)),
-                                      str(fields.get("storage_location", ""))[:80], str(fields.get("notes", ""))[:500], now))
-                        conn.execute("DELETE FROM deleted_records WHERE table_name='coin_collection' AND record_key=?", (coin_id,))
-                self.json_response({"ok": True, "id": coin_id}); return
-            if self.path == "/api/graded-coins":
-                raw=self.read_json(); cert=str(raw.get("certificate_no", "")).strip()[:80]
-                name=str(raw.get("coin_name", "")).strip()[:120]; grade=str(raw.get("grade", "")).strip()[:30]
-                digits="".join(ch for ch in cert if ch.isdigit())
-                if len(digits)==10: cert=digits[:7]+"-"+digits[7:]
-                if not cert or not grade: raise ValueError("请填写 NGC 证书编号和评级")
-                if not name: name="NGC 证书 "+cert
-                item_id=hashlib.sha256(("NGC:"+cert).encode()).hexdigest()[:20]; now=datetime.now().isoformat(timespec="microseconds")
-                with db() as conn:
-                    conn.execute("INSERT OR REPLACE INTO graded_coins VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                      (item_id,"NGC",cert,name,int(raw["issue_year"]) if raw.get("issue_year") else None,grade.upper(),
-                       str(raw.get("label_type", ""))[:40],money(raw.get("purchase_price",0)),money(raw.get("estimated_value",0)),
-                       str(raw.get("storage_location", ""))[:80],str(raw.get("notes", ""))[:500],now))
-                    conn.execute("DELETE FROM deleted_records WHERE table_name='graded_coins' AND record_key=?",(item_id,))
-                self.json_response({"ok":True,"id":item_id}); return
-            if self.path == "/api/graded-coins/delete":
-                cert=str(self.read_json().get("certificate_no", "")).strip()[:80]
-                if not cert: raise ValueError("证书编号不能为空")
-                now=datetime.now().isoformat(timespec="microseconds")
-                with db() as conn:
-                    row=conn.execute("SELECT * FROM graded_coins WHERE certificate_no=?",(cert,)).fetchone()
-                    if not row: raise ValueError("NGC 记录不存在")
-                    conn.execute("DELETE FROM graded_coins WHERE certificate_no=?",(cert,))
-                    conn.execute("INSERT OR REPLACE INTO deleted_records VALUES('graded_coins',?,?)",(row["id"],now))
-                    audit(conn,"NGC_COIN_DELETED","删除 NGC 盒币："+cert,{"certificateNo":cert,"previous":dict(row)},now)
-                self.json_response({"ok":True}); return
             if self.path == "/api/scholar/import":
                 raw=self.read_json(); profile=raw.get("profile") or {}; metrics=profile.get("metrics") or {}
                 pid=str(profile.get("id","")).strip()[:80]; name=str(profile.get("name","")).strip()[:120]
