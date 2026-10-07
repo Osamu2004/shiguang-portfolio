@@ -2,7 +2,6 @@
 import io
 import json
 import shutil
-import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,7 +9,6 @@ from unittest.mock import patch
 
 import server
 import sync_engine
-import stock_snapshots
 
 
 class RegressionTest(unittest.TestCase):
@@ -47,43 +45,64 @@ class RegressionTest(unittest.TestCase):
         handler.do_GET()
         return responses[0]
 
-    def test_stock_snapshots_page_back_to_august_and_keep_october_liquidation(self):
-        account = {"name":"可用现金", "account_type":"证券账户", "platform":"测试", "balance":"500"}
-        self.assertEqual(self.post("/api/accounts", account)[0], 200)
-        august = {"day":"2026-08-12", "symbol":"600519", "name":"测试股票", "market_value":"1000"}
-        self.assertEqual(self.post("/api/stocks", august)[0], 200)
-        self.assertEqual(self.get_json("/api/state")[1]["total"], "1500.00")
-        self.assertEqual(self.post("/api/stocks", {**august, "day":"2026-09-12", "market_value":"1250"})[0], 200)
-        self.assertEqual(self.post("/api/stocks", {**august, "day":"2026-10-01", "market_value":"0"})[0], 200)
-        august_view = self.get_json("/api/stocks?day=2026-08-12")[1]
-        october_view = self.get_json("/api/stocks?day=2026-10-01")[1]
-        self.assertEqual(august_view["positions"][0]["market_value"], "1000.00")
-        self.assertFalse(august_view["positions"][0]["closed"])
-        self.assertTrue(october_view["positions"][0]["closed"])
-        self.assertEqual(october_view["snapshotDays"], ["2026-08-12", "2026-09-12", "2026-10-01"])
-        state = self.get_json("/api/state")[1]
-        self.assertEqual(state["stockTotal"], "0.00")
-        self.assertEqual(state["total"], "500.00")
-        self.assertEqual(state["accounts"][0]["balance"], "500.00")
-        with server.db() as conn:
-            self.assertEqual(conn.execute("SELECT market_value FROM portfolio_snapshots ORDER BY day DESC LIMIT 1").fetchone()[0], "500.00")
-        self.assertEqual(self.post("/api/stocks", {**august,"symbol":"AAPL","day":"2026-10-02","market_value":"0"})[0], 400)
+    def test_etf_august_purchase_october_clear_and_date_paging(self):
+        self.assertEqual(self.post("/api/accounts", {"name":"可用现金", "account_type":"证券账户",
+            "platform":"测试", "balance":"500"})[0], 200)
+        etf = {"code":"510300", "name":"沪深300 ETF", "category":"ETF",
+               "holding_profit":"0", "return_rate":"0"}
+        self.assertEqual(self.post("/api/holdings", {**etf,"day":"2026-08-12","market_value":"1000"})[0], 200)
+        self.assertEqual(self.post("/api/holdings", {**etf,"day":"2026-09-12","market_value":"1250",
+            "holding_profit":"250","return_rate":"25"})[0], 200)
+        self.assertEqual(self.post("/api/holdings", {**etf,"day":"2026-10-01","market_value":"0"})[0], 200)
+        august = self.get_json("/api/holdings/calendar?day=2026-08-12")[1]
+        october = self.get_json("/api/holdings/calendar?day=2026-10-01")[1]
+        self.assertEqual(august["positions"][0]["market_value"], "1000.00")
+        self.assertFalse(august["positions"][0]["closed"])
+        self.assertTrue(october["positions"][0]["closed"])
+        self.assertEqual(october["snapshotDays"], ["2026-08-12", "2026-09-12", "2026-10-01"])
+        current = self.get_json("/api/state")[1]
+        self.assertEqual(current["total"], "500.00")
+        self.assertEqual(current["accounts"][0]["balance"], "500.00")
+        self.assertEqual(current["holdings"], [])
+        self.assertEqual(current["archivedHoldings"][0]["market_value"], "0.00")
+        self.assertEqual(self.post("/api/holdings", {**etf,"day":"2026-10-02","market_value":"0",
+            "name":"另一只 ETF", "code":"510500"})[0], 400)
 
-    def test_stock_snapshot_sync_roundtrip_preserves_closed_history(self):
+    def test_backdated_etf_snapshot_does_not_replace_newer_current_value(self):
+        etf = {"code":"510300", "name":"沪深300 ETF", "category":"ETF",
+               "holding_profit":"0", "return_rate":"0"}
+        self.assertEqual(self.post("/api/holdings", {**etf,"market_value":"2000"})[0], 200)
+        self.assertEqual(self.post("/api/holdings", {**etf,"day":"2026-08-12","market_value":"1000"})[0], 200)
+        self.assertEqual(self.get_json("/api/state")[1]["fundTotal"], "2000.00")
+        self.assertEqual(self.get_json("/api/holdings/calendar?day=2026-08-12")[1]["positions"][0]["market_value"], "1000.00")
+
+    def test_deleting_etf_clear_snapshot_restores_current_holding(self):
+        etf = {"code":"510300", "name":"沪深300 ETF", "category":"ETF",
+               "holding_profit":"0", "return_rate":"0"}
+        self.post("/api/holdings", {**etf,"day":"2026-08-12","market_value":"1000"})
+        self.post("/api/holdings", {**etf,"day":"2026-10-01","market_value":"0"})
+        self.assertEqual(self.post("/api/holdings/history/delete", {"code":"510300","day":"2026-10-01"})[0], 200)
+        current = self.get_json("/api/state")[1]
+        self.assertEqual(current["fundTotal"], "1000.00")
+        self.assertEqual(len(current["holdings"]), 1)
+
+    def test_cleared_etf_requires_new_nonzero_snapshot_to_reopen(self):
+        etf = {"code":"510300", "name":"沪深300 ETF", "category":"ETF",
+               "holding_profit":"0", "return_rate":"0"}
+        self.post("/api/holdings", {**etf,"day":"2026-08-12","market_value":"1000"})
+        self.post("/api/holdings", {**etf,"day":"2026-10-01","market_value":"0"})
+        self.assertEqual(self.post("/api/holdings/restore", {"code":"510300"})[0], 400)
+        self.assertEqual(self.post("/api/holdings", {**etf,"day":"2026-10-05","market_value":"1100"})[0], 200)
+        self.assertTrue(self.get_json("/api/holdings/calendar?day=2026-10-02")[1]["positions"][0]["closed"])
+        self.assertFalse(self.get_json("/api/holdings/calendar?day=2026-10-05")[1]["positions"][0]["closed"])
+        self.assertEqual(self.get_json("/api/state")[1]["fundTotal"], "1100.00")
+
+    def test_old_standalone_stock_records_are_preserved_but_not_counted(self):
         with server.db() as conn:
-            stock_snapshots.save_snapshot(conn, {"day":"2026-08-12","symbol":"AAPL","name":"Apple","market_value":"1000"})
-            stock_snapshots.save_snapshot(conn, {"day":"2026-10-01","symbol":"AAPL","name":"Apple","market_value":"0"})
-        payload = sync_engine.export_data(server.DB)
-        merged = sync_engine.merge_vaults(payload, {"tables": {}})
-        second = server.DATA / "other.db"
-        shutil.copy2(server.DB, second)
-        with sqlite3.connect(second) as conn:
-            conn.execute("DELETE FROM stock_snapshots")
-        sync_engine.import_data(second, merged)
-        with sqlite3.connect(second) as conn:
-            conn.row_factory = sqlite3.Row
-            self.assertEqual(len(stock_snapshots.dated_view(conn, "2026-10-01")["snapshotDays"]), 2)
-            self.assertTrue(stock_snapshots.positions_on(conn)[0]["closed"])
+            conn.execute("INSERT INTO stock_snapshots VALUES(?,?,?,?,?)",
+                         ("510300", "2026-08-12", "旧版误录 ETF", "1000.00", "2026-10-01"))
+        self.assertEqual(self.get_json("/api/state")[1]["total"], "0")
+        self.assertEqual(sync_engine.export_data(server.DB)["tables"]["stock_snapshots"][0]["market_value"], "1000.00")
 
     def test_foreign_origin_cannot_modify_local_data(self):
         payload = {"name": "跨站账户", "account_type": "现金", "platform": "测试", "balance": "100"}
