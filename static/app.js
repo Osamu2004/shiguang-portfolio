@@ -43,8 +43,12 @@ function renderDashboard(){
   $('#fundValue').textContent=money(state.fundTotal);
   $('#profit').textContent=`${profit>=0?'+':''}${money(profit)}`;
   $('#profit').style.color=profit>0?'var(--rust)':profit<0?'var(--forest)':'var(--ink)';
-  $('#profitRateValue').textContent='按持仓查看';
-  $('#profitRateValue').style.color='var(--ink)';
+  const returnRate=state.fundReturnRate==null?null:Number(state.fundReturnRate);
+  $('#profitRateValue').textContent=returnRate==null?'—':`${returnRate>0?'+':''}${returnRate.toFixed(2)}%`;
+  $('#profitRateValue').style.color=returnRate>0?'var(--rust)':returnRate<0?'var(--forest)':'var(--ink)';
+  $('#profitRateHint').textContent=returnRate==null
+    ?(state.holdings.length?'当前数据不足以计算':'暂无当前基金与 ETF 持仓')
+    :'仅当前基金与 ETF；持有收益 ÷ (市值 − 持有收益)';
   $('#fundCount').textContent=state.holdings.length;
   $('#accountCountText').textContent=`${state.accounts.length} 个账户 · ${state.holdings.length} 只基金/ETF`;
   const latest=[...state.accounts,...state.holdings].sort((a,b)=>String(b.updated_at).localeCompare(String(a.updated_at)))[0];
@@ -87,7 +91,7 @@ function renderAdvice(){if(!state.holdings.length||!Number(state.fundTotal)){$('
 function escapeHtml(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 const fundCategorySelect=$('#holdingForm').elements.category;['股票基金','混合基金','其他基金'].forEach(name=>{const option=document.createElement('option');option.textContent=name;fundCategorySelect.append(option)});
 const holdingForm=$('#holdingForm'),profitInput=holdingForm.elements.holding_profit;let fundLookupTimer;async function lookupFund(){const code=holdingForm.elements.code.value.replace(/\D/g,'').slice(0,6);holdingForm.elements.code.value=code;if(code.length!==6||holdingForm.elements.category.value==='ETF')return;try{const fund=await api(`/api/funds/lookup?code=${encodeURIComponent(code)}`);if(holdingForm.elements.code.value!==code)return;holdingForm.elements.name.value=fund.name;holdingForm.elements.category.value=fund.category;toast(`已识别：${fund.name}`)}catch(x){toast(x.message)}}holdingForm.elements.code.oninput=()=>{clearTimeout(fundLookupTimer);fundLookupTimer=setTimeout(lookupFund,450)};holdingForm.elements.code.onblur=lookupFund;
-holdingForm.elements.market_value.required=true;profitInput.required=true;holdingForm.elements.return_rate.required=true;const holdingHint=document.createElement('p');holdingHint.className='mini';holdingHint.textContent='请将平台显示的金额、持有收益、持有收益率三项按所选日期原样填写；软件不会互相反推或改写，也不自动计算本金或组合收益率。';const verifyHint=document.createElement('p');verifyHint.className='verify-hint valid';verifyHint.textContent='平台原始值模式 · 三项分别保存';holdingForm.querySelector('.calendar-form-actions').before(holdingHint,verifyHint);
+holdingForm.elements.market_value.required=true;profitInput.required=true;holdingForm.elements.return_rate.required=true;const holdingHint=document.createElement('p');holdingHint.className='mini';holdingHint.textContent='请将平台显示的金额、持有收益、持有收益率三项按所选日期原样填写；软件不会互相反推或改写，也不保存本金；仪表盘的总收益率仅按当前持仓市值与持有收益计算。';const verifyHint=document.createElement('p');verifyHint.className='verify-hint valid';verifyHint.textContent='平台原始值模式 · 三项分别保存';holdingForm.querySelector('.calendar-form-actions').before(holdingHint,verifyHint);
 function renderAccounts(){const e=$('#accountList');e.innerHTML=state.accounts.length?state.accounts.map(a=>`<div class="holding"><div><b>${escapeHtml(a.name)}</b><small>${escapeHtml(a.platform)} · ${escapeHtml(a.account_type)}</small></div><div class="amount money">${money(a.balance)}</div><div class="share">${state.total?((+a.balance/+state.total)*100).toFixed(1):0}%</div></div>`).join(''):'<div class="empty">还没有现金或平台账户。</div>'}
 function renderAllAssetsCheckup(){
   const rows=[...state.accounts.map(a=>({category:a.account_type,value:+a.balance||0})),
@@ -127,7 +131,7 @@ function renderAllAssetsCheckup(){
   $('#returnQuality').textContent=state.holdings.length?`${profit>=0?'+':''}${money(profit)}`:'—';
   $('#returnQuality').style.color=profit>0?'var(--rust)':profit<0?'var(--forest)':'var(--ink)';
   $('#returnStatus').textContent=state.holdings.length?
-    '仅汇总平台报告的持有收益；不推算本金或组合收益率。':'暂无基金持仓收益。';
+    '仅汇总当前持仓的平台持有收益；总收益率见上方，已清仓不计入。':'暂无基金持仓收益。';
   const score=(topPct<=50?34:topPct<=70?24:14)+(weighted<=3.5?33:weighted<=4.3?24:14)
     +(liquidPct>=20?33:liquidPct>=10?24:14);
   $('#healthScore').textContent=score;

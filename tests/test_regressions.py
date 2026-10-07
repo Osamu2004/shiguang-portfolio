@@ -67,6 +67,7 @@ class RegressionTest(unittest.TestCase):
         self.assertEqual(current["total"], "500.00")
         self.assertEqual(current["accounts"][0]["balance"], "500.00")
         self.assertEqual(current["holdings"], [])
+        self.assertIsNone(current["fundReturnRate"])
         self.assertEqual(current["archivedHoldings"][0]["market_value"], "0.00")
         self.assertEqual(self.post("/api/holdings", {**etf,"day":"2026-10-02","market_value":"0",
             "name":"另一只 ETF", "code":"510500"})[0], 400)
@@ -78,6 +79,22 @@ class RegressionTest(unittest.TestCase):
         self.assertEqual(self.post("/api/holdings", {**etf,"day":"2026-08-12","market_value":"1000"})[0], 200)
         self.assertEqual(self.get_json("/api/state")[1]["fundTotal"], "2000.00")
         self.assertEqual(self.get_json("/api/holdings/calendar?day=2026-08-12")[1]["positions"][0]["market_value"], "1000.00")
+
+    def test_dashboard_return_rate_uses_only_current_fund_holdings(self):
+        self.post("/api/accounts", {"name":"现金", "account_type":"现金", "platform":"现金", "balance":"10000"})
+        first = {"code":"510300", "name":"ETF A", "category":"ETF", "market_value":"1200",
+                 "holding_profit":"200", "return_rate":"20"}
+        second = {"code":"000001", "name":"基金 B", "category":"宽基指数", "market_value":"550",
+                  "holding_profit":"50", "return_rate":"10"}
+        self.assertEqual(self.post("/api/holdings", first)[0], 200)
+        self.assertEqual(self.post("/api/holdings", second)[0], 200)
+        current = self.get_json("/api/state")[1]
+        self.assertEqual(current["fundReturnRate"], "16.67")
+        self.assertEqual(current["totalCost"], None)
+        self.assertEqual(self.post("/api/holdings", {**first, "market_value":"0", "holding_profit":"0", "return_rate":"0"})[0], 200)
+        self.assertEqual(self.get_json("/api/state")[1]["fundReturnRate"], "10.00")
+        self.assertEqual(self.post("/api/holdings", {**second, "market_value":"100", "holding_profit":"100", "return_rate":"100"})[0], 200)
+        self.assertIsNone(self.get_json("/api/state")[1]["fundReturnRate"])
 
     def test_deleting_etf_clear_snapshot_restores_current_holding(self):
         etf = {"code":"510300", "name":"沪深300 ETF", "category":"ETF",

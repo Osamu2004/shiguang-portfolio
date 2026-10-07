@@ -41,6 +41,7 @@ const assert = require('node:assert/strict');
         const cards = await page.locator('.personal-kpis article').evaluateAll(elements => elements.map(e => e.getBoundingClientRect().top));
         assert(cards[2] > cards[0], `Dashboard KPI cards are hidden in a horizontal strip at ${width}px`);
       }
+      if (id === 'dashboard') assert.equal(await page.locator('#profitRateValue').innerText(), '+2.88%');
       await page.screenshot({ path: path.join(out, `${id}-${width}.png`), fullPage: true });
     }
   }
@@ -75,6 +76,8 @@ const assert = require('node:assert/strict');
   await page.locator('#holdingClear').click();
   await page.waitForFunction(() => document.querySelector('#holdingCalendarRows').textContent.includes('浏览器回归 ETF') && document.querySelector('#holdingCalendarRows').textContent.includes('已清仓于 2026-10-07'));
   assert(!(await page.request.get('http://127.0.0.1:18787/api/state').then(r=>r.json())).holdings.some(h => h.code === '588000'));
+  await page.evaluate(() => go('dashboard'));
+  assert.equal(await page.locator('#profitRateValue').innerText(), '+2.88%');
   await page.locator('#userMenuButton').click();
   await page.locator('#userMenu [data-page="manage"]').click();
   await page.locator('#activeHoldingActions [data-action="history"]').first().click();
@@ -94,6 +97,7 @@ const assert = require('node:assert/strict');
     renderDashboard();renderAllocation();renderAdvice();go('dashboard');
   });
   assert(!/NaN|Infinity/.test(await page.locator('#dashboard').innerText()));
+  assert.equal(await page.locator('#profitRateValue').innerText(), '—');
   assert.equal(await page.locator('#riskLevel').innerText(), '—');
   const local = await page.evaluate(() => localDay(new Date('2026-09-07T01:00:00+08:00')));
   assert.equal(local, '2026-09-07');

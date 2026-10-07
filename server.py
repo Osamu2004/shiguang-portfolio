@@ -563,10 +563,14 @@ class Handler(SimpleHTTPRequestHandler):
             total = sum(Decimal(r["market_value"]) for r in rows)
             account_total = sum(Decimal(r["balance"]) for r in accounts)
             reported_profit = sum(Decimal(r["holding_profit"]) for r in rows)
+            # This is a current-holdings rate only; cash and cleared positions have no return basis.
+            return_bases = [Decimal(r["market_value"]) - Decimal(r["holding_profit"]) for r in rows]
+            return_rate = (str((reported_profit / sum(return_bases) * 100).quantize(Decimal("0.01")))
+                           if return_bases and all(value > 0 for value in return_bases) else None)
             self.json_response({"holdings": rows, "archivedHoldings": archived, "accounts": accounts,
                 "total": str(total + account_total), "fundTotal": str(total),
                 "accountTotal": str(account_total), "totalCost": None,
-                "profit": str(reported_profit), "snapshots": snapshots})
+                "profit": str(reported_profit), "fundReturnRate": return_rate, "snapshots": snapshots})
             return
         if self.path == "/api/manage":
             with db() as conn:
