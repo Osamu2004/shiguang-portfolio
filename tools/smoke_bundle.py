@@ -46,6 +46,30 @@ with tempfile.TemporaryDirectory(prefix="shiguang-native-") as data:
                 except urllib.error.HTTPError as error:
                     assert error.code == 404, (endpoint, error.code)
                     checks[endpoint] = {"status": 404}
+            foreign_get = urllib.request.Request(base + "/api/state",
+                                                 headers={"Origin": "chrome-extension://untrustedexample"})
+            try:
+                urllib.request.urlopen(foreign_get, timeout=5)
+                raise AssertionError("An extension could read the ledger")
+            except urllib.error.HTTPError as error:
+                assert error.code == 403 and not error.headers.get("Access-Control-Allow-Origin")
+                checks["foreign-origin GET /api/state"] = {"status": 403}
+            body = json.dumps({"name": "打包测试", "account_type": "现金",
+                               "platform": "测试", "balance": "12.34"}).encode()
+            for origin, expected in (("https://example.com", 403), (base, 200)):
+                request = urllib.request.Request(base + "/api/accounts", data=body,
+                                                 headers={"Origin": origin, "Content-Type": "application/json"})
+                try:
+                    with urllib.request.urlopen(request, timeout=5) as response:
+                        status = response.status
+                except urllib.error.HTTPError as error:
+                    status = error.code
+                assert status == expected, (origin, status)
+            with urllib.request.urlopen(base + "/api/state", timeout=5) as response:
+                saved = json.load(response)
+            assert len(saved["accounts"]) == 1 and saved["accounts"][0]["balance"] == "12.34"
+            checks["same-origin POST /api/accounts"] = {"status": 200}
+            checks["foreign-origin POST /api/accounts"] = {"status": 403}
             (out / "native-smoke.json").write_text(json.dumps(checks, indent=2))
             print(json.dumps(checks, indent=2))
         finally:

@@ -12,7 +12,7 @@ const assert = require('node:assert/strict');
   const page = await context.newPage();
   const errors = [], results = [];
   page.on('pageerror', e => errors.push(e.message));
-  for (const width of [1440, 1280, 900, 768, 390]) {
+  for (const width of [1440, 1280, 900, 768, 390, 320]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto('http://127.0.0.1:18787');
     await page.waitForFunction(() => document.querySelector('#holdingList .fund-row'));
@@ -26,7 +26,22 @@ const assert = require('node:assert/strict');
         }).slice(0, 8).map(e => e.id || e.className)
       }));
       results.push({ width, page: id, ...layout });
-      if (['dashboard','holdings','sync'].includes(id)) await page.screenshot({ path: path.join(out, `${id}-${width}.png`), fullPage: true });
+      if (id === 'research') {
+        const actions = await page.locator('.scholar-actions > *:visible').evaluateAll(elements => elements.map(e => {
+          const { left, top, right, bottom } = e.getBoundingClientRect();
+          return { left, top, right, bottom };
+        }));
+        for (let i = 0; i < actions.length; i++) for (let j = i + 1; j < actions.length; j++) {
+          const a = actions[i], b = actions[j];
+          assert(!(a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top),
+            `Research actions overlap at ${width}px`);
+        }
+      }
+      if (id === 'dashboard' && width <= 600) {
+        const cards = await page.locator('.personal-kpis article').evaluateAll(elements => elements.map(e => e.getBoundingClientRect().top));
+        assert(cards[2] > cards[0], `Dashboard KPI cards are hidden in a horizontal strip at ${width}px`);
+      }
+      await page.screenshot({ path: path.join(out, `${id}-${width}.png`), fullPage: true });
     }
   }
   await page.setViewportSize({width: 390, height: 740});
@@ -55,6 +70,37 @@ const assert = require('node:assert/strict');
   const local = await page.evaluate(() => localDay(new Date('2026-09-07T01:00:00+08:00')));
   assert.equal(local, '2026-09-07');
   await page.screenshot({path:path.join(out,'empty-dashboard-390.png'),fullPage:true});
+  await page.goto('http://127.0.0.1:18787');
+  await page.waitForFunction(() => document.querySelector('#holdingList .fund-row'));
+  await page.evaluate(() => go('holdings'));
+  await page.locator('#accountForm [name="name"]').fill('浏览器回归账户');
+  await page.locator('#accountForm [name="platform"]').fill('测试平台');
+  await page.locator('#accountForm [name="balance"]').fill('123.45');
+  await page.locator('#accountForm button').click();
+  await page.waitForFunction(() => document.querySelector('#accountList').textContent.includes('浏览器回归账户'));
+  await page.evaluate(() => go('health'));
+  await page.locator('#healthForm [name="steps"]').fill('8000');
+  await page.locator('#healthForm [name="sleep_minutes"]').fill('480');
+  await page.locator('#healthForm button').click();
+  await page.waitForFunction(() => document.querySelector('#stepsKpi').textContent.includes('8,000'));
+  await page.evaluate(() => go('research'));
+  await page.locator('#scholarConfig [name="profile_url"]').fill('https://scholar.google.com/citations?user=test123');
+  await page.locator('#scholarConfig button').click();
+  await page.waitForFunction(() => document.querySelector('#scholarProfileLink').getAttribute('href')?.includes('test123'));
+  await page.locator('#scholarImport').setInputFiles({
+    name: 'scholar.json', mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({profile:{id:'test123',name:'浏览器回归研究者',metrics:{citationsAll:42}},papers:[]}))
+  });
+  await page.waitForFunction(() => document.querySelector('#scholarName').textContent === '浏览器回归研究者');
+  await page.evaluate(() => go('manage'));
+  page.once('dialog', dialog => dialog.accept());
+  await page.locator('#activeHoldingActions [data-action="archive"]').first().click();
+  await page.waitForFunction(() => document.querySelectorAll('#archivedHoldingList .archived').length === 1);
+  await page.locator('#archivedHoldingList .archived button').filter({hasText:'恢复'}).click();
+  await page.waitForFunction(() => document.querySelectorAll('#archivedHoldingList .archived').length === 0);
+  const saved = await page.request.get('http://127.0.0.1:18787/api/state').then(r => r.json());
+  assert(saved.accounts.some(a => a.name === '浏览器回归账户' && a.balance === '123.45'));
+  assert.equal(saved.holdings.length, 3);
   await browser.close();
   fs.writeFileSync(path.join(out, 'layout.json'), JSON.stringify({ errors, results }, null, 2));
   console.log(JSON.stringify({ errors, overflows: results.filter(r => r.scrollWidth > r.viewport + 2), checks: results.length }, null, 2));

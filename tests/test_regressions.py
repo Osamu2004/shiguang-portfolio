@@ -22,16 +22,41 @@ class RegressionTest(unittest.TestCase):
         with server.db():
             pass
 
-    def post(self, endpoint, payload):
+    def post(self, endpoint, payload, origin=None, host="127.0.0.1:8787"):
         handler = server.Handler.__new__(server.Handler)
         body = json.dumps(payload).encode()
         handler.path = endpoint
-        handler.headers = {"Content-Length": str(len(body))}
+        handler.headers = {"Content-Length": str(len(body)), "Host": host}
+        if origin is not None:
+            handler.headers["Origin"] = origin
         handler.rfile = io.BytesIO(body)
         responses = []
         handler.json_response = lambda data, status=200: responses.append((status, data))
         handler.do_POST()
         return responses[0]
+
+    def test_foreign_origin_cannot_modify_local_data(self):
+        payload = {"name": "跨站账户", "account_type": "现金", "platform": "测试", "balance": "100"}
+        self.assertEqual(self.post("/api/accounts", payload, origin="https://example.com")[0], 403)
+        self.assertEqual(self.post("/api/accounts", payload, origin="http://example.com",
+                                   host="example.com")[0], 403)
+        self.assertEqual(self.post("/api/accounts", payload, host="[invalid")[0], 403)
+        with server.db() as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0], 0)
+        self.assertEqual(self.post("/api/accounts", payload,
+                                   origin="http://127.0.0.1:8787")[0], 200)
+
+    def test_extension_access_is_limited_to_scholar_import(self):
+        origin = "chrome-extension://abcdefghijklmnopabcdefghijklmnop"
+        handler = server.Handler.__new__(server.Handler)
+        handler.path = "/api/state"
+        handler.headers = {"Host": "127.0.0.1:8787", "Origin": origin}
+        self.assertFalse(handler.request_allowed())
+        self.assertEqual(handler.extension_origin(), "")
+        status, data = self.post("/api/scholar/import", {
+            "profile": {"id": "test", "name": "测试研究者"}, "papers": []
+        }, origin=origin)
+        self.assertEqual(status, 200, data)
 
     def test_repeated_save_does_not_collide_in_audit_log(self):
         with server.db() as conn:

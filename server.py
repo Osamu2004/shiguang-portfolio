@@ -390,17 +390,49 @@ def inferred_holding_flow(conn, holding_key):
 class Handler(SimpleHTTPRequestHandler):
     def extension_origin(self):
         origin = self.headers.get("Origin", "")
-        if origin.startswith(("chrome-extension://", "extension://", "moz-extension://")):
+        if self.path == "/api/scholar/import" and origin.startswith(
+            ("chrome-extension://", "extension://", "moz-extension://")
+        ):
             return origin
         return ""
 
+    def request_allowed(self):
+        headers = getattr(self, "headers", {})
+        host = headers.get("Host", "")
+        if host:
+            try:
+                parsed_host = urllib.parse.urlsplit("//" + host)
+            except ValueError:
+                return False
+            if parsed_host.hostname not in ("127.0.0.1", "localhost") or parsed_host.username or parsed_host.password:
+                return False
+        origin = headers.get("Origin", "")
+        if not origin:
+            return True
+        if self.extension_origin():
+            return True
+        try:
+            parsed_origin = urllib.parse.urlsplit(origin)
+        except ValueError:
+            return False
+        return (parsed_origin.scheme == "http" and parsed_origin.netloc == host
+                and parsed_origin.path == "" and not parsed_origin.query and not parsed_origin.fragment)
+
+    def reject_untrusted_request(self):
+        if self.request_allowed():
+            return False
+        self.json_response({"error": "仅接受本机同源请求"}, 403)
+        return True
+
     def do_OPTIONS(self):
+        if not self.request_allowed():
+            self.send_error(403); return
         origin = self.extension_origin()
         if not origin:
             self.send_error(403); return
         self.send_response(204); self.send_header("Access-Control-Allow-Origin", origin)
         self.send_header("Vary", "Origin")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type"); self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS"); self.end_headers()
+        self.send_header("Access-Control-Allow-Headers", "Content-Type"); self.send_header("Access-Control-Allow-Methods", "POST,OPTIONS"); self.end_headers()
 
     def translate_path(self, path):
         # Use the standard handler's URL decoding and traversal normalization,
@@ -438,6 +470,8 @@ class Handler(SimpleHTTPRequestHandler):
         return data
 
     def do_GET(self):
+        if self.reject_untrusted_request():
+            return
         if self.path.startswith("/api/funds/lookup?"):
             code = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("code", [""])[0]
             try:
@@ -571,6 +605,8 @@ class Handler(SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self):
+        if self.reject_untrusted_request():
+            return
         try:
             if self.path == "/api/holdings":
                 item = clean_item(self.read_json())
