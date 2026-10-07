@@ -55,9 +55,12 @@ class RegressionTest(unittest.TestCase):
             "holding_profit":"250","return_rate":"25"})[0], 200)
         self.assertEqual(self.post("/api/holdings", {**etf,"day":"2026-10-01","market_value":"0"})[0], 200)
         august = self.get_json("/api/holdings/calendar?day=2026-08-12")[1]
+        september = self.get_json("/api/holdings/calendar?day=2026-09-12")[1]
         october = self.get_json("/api/holdings/calendar?day=2026-10-01")[1]
         self.assertEqual(august["positions"][0]["market_value"], "1000.00")
         self.assertFalse(august["positions"][0]["closed"])
+        self.assertEqual(september["positions"][0]["holding_profit"], "250.00")
+        self.assertEqual(september["positions"][0]["return_rate"], "25.00")
         self.assertTrue(october["positions"][0]["closed"])
         self.assertEqual(october["snapshotDays"], ["2026-08-12", "2026-09-12", "2026-10-01"])
         current = self.get_json("/api/state")[1]
