@@ -41,6 +41,16 @@ class SyncTest(unittest.TestCase):
         merged = sync.merge_vaults(active, archived)
         self.assertEqual(merged["tables"]["holdings"][0]["archived_at"], "2026-02-01")
 
+    def test_corrected_fund_code_does_not_restore_older_same_name_record(self):
+        old = {"tables": {"holdings": [{"code": "000001", "name": "同一基金",
+            "market_value": "100", "updated_at": "2026-10-06"}]}}
+        new = {"tables": {"holdings": [{"code": "000002", "name": "同一基金",
+            "market_value": "200", "updated_at": "2026-10-07"}]}}
+        for local, remote in ((old, new), (new, old)):
+            with self.subTest(local_code=local["tables"]["holdings"][0]["code"]):
+                rows = sync.merge_vaults(local, remote)["tables"]["holdings"]
+                self.assertEqual([(r["code"], r["market_value"]) for r in rows], [("000002", "200")])
+
     def test_retired_metadata_is_preserved_in_encrypted_vault(self):
         local={"updatedAt":"2","tables":{"coins":[{"id":"coin-1","name":"A","updated_at":"2"}]}}
         merged=sync.merge_vaults(local,{"updatedAt":"1","tables":{}})

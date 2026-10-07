@@ -1,6 +1,8 @@
 """Regression cases for the September 2026 source and UI audit."""
 import io
 import json
+import shutil
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +10,7 @@ from unittest.mock import patch
 
 import server
 import sync_engine
+import stock_snapshots
 
 
 class RegressionTest(unittest.TestCase):
@@ -34,6 +37,53 @@ class RegressionTest(unittest.TestCase):
         handler.json_response = lambda data, status=200: responses.append((status, data))
         handler.do_POST()
         return responses[0]
+
+    def get_json(self, endpoint):
+        handler = server.Handler.__new__(server.Handler)
+        handler.path = endpoint
+        handler.headers = {}
+        responses = []
+        handler.json_response = lambda data, status=200: responses.append((status, data))
+        handler.do_GET()
+        return responses[0]
+
+    def test_stock_snapshots_page_back_to_august_and_keep_october_liquidation(self):
+        account = {"name":"可用现金", "account_type":"证券账户", "platform":"测试", "balance":"500"}
+        self.assertEqual(self.post("/api/accounts", account)[0], 200)
+        august = {"day":"2026-08-12", "symbol":"600519", "name":"测试股票", "market_value":"1000"}
+        self.assertEqual(self.post("/api/stocks", august)[0], 200)
+        self.assertEqual(self.get_json("/api/state")[1]["total"], "1500.00")
+        self.assertEqual(self.post("/api/stocks", {**august, "day":"2026-09-12", "market_value":"1250"})[0], 200)
+        self.assertEqual(self.post("/api/stocks", {**august, "day":"2026-10-01", "market_value":"0"})[0], 200)
+        august_view = self.get_json("/api/stocks?day=2026-08-12")[1]
+        october_view = self.get_json("/api/stocks?day=2026-10-01")[1]
+        self.assertEqual(august_view["positions"][0]["market_value"], "1000.00")
+        self.assertFalse(august_view["positions"][0]["closed"])
+        self.assertTrue(october_view["positions"][0]["closed"])
+        self.assertEqual(october_view["snapshotDays"], ["2026-08-12", "2026-09-12", "2026-10-01"])
+        state = self.get_json("/api/state")[1]
+        self.assertEqual(state["stockTotal"], "0.00")
+        self.assertEqual(state["total"], "500.00")
+        self.assertEqual(state["accounts"][0]["balance"], "500.00")
+        with server.db() as conn:
+            self.assertEqual(conn.execute("SELECT market_value FROM portfolio_snapshots ORDER BY day DESC LIMIT 1").fetchone()[0], "500.00")
+        self.assertEqual(self.post("/api/stocks", {**august,"symbol":"AAPL","day":"2026-10-02","market_value":"0"})[0], 400)
+
+    def test_stock_snapshot_sync_roundtrip_preserves_closed_history(self):
+        with server.db() as conn:
+            stock_snapshots.save_snapshot(conn, {"day":"2026-08-12","symbol":"AAPL","name":"Apple","market_value":"1000"})
+            stock_snapshots.save_snapshot(conn, {"day":"2026-10-01","symbol":"AAPL","name":"Apple","market_value":"0"})
+        payload = sync_engine.export_data(server.DB)
+        merged = sync_engine.merge_vaults(payload, {"tables": {}})
+        second = server.DATA / "other.db"
+        shutil.copy2(server.DB, second)
+        with sqlite3.connect(second) as conn:
+            conn.execute("DELETE FROM stock_snapshots")
+        sync_engine.import_data(second, merged)
+        with sqlite3.connect(second) as conn:
+            conn.row_factory = sqlite3.Row
+            self.assertEqual(len(stock_snapshots.dated_view(conn, "2026-10-01")["snapshotDays"]), 2)
+            self.assertTrue(stock_snapshots.positions_on(conn)[0]["closed"])
 
     def test_foreign_origin_cannot_modify_local_data(self):
         payload = {"name": "跨站账户", "account_type": "现金", "platform": "测试", "balance": "100"}
@@ -76,7 +126,59 @@ class RegressionTest(unittest.TestCase):
 
     def test_complete_loss_can_be_recorded(self):
         item = server.clean_item({"name": "测试", "market_value": "0", "holding_profit": "-100", "return_rate": "-100"})
-        self.assertEqual(item["cost"], "100.00")
+        self.assertEqual(item["holding_profit"], "-100.00")
+        self.assertNotIn("cost", item)
+
+    def test_rounded_platform_rate_does_not_create_inferred_principal(self):
+        payload = {"code": "000001", "name": "测试", "market_value": "5981.99",
+                   "holding_profit": "-518.01", "return_rate": "-7.97"}
+        self.assertEqual(self.post("/api/holdings", payload)[0], 200)
+        with server.db() as conn:
+            self.assertEqual(conn.execute("SELECT cost FROM holdings").fetchone()[0], "0.00")
+        handler = server.Handler.__new__(server.Handler)
+        handler.path = "/api/state"
+        handler.headers = {}
+        responses = []
+        handler.json_response = lambda data, status=200: responses.append(data)
+        handler.do_GET()
+        self.assertIsNone(responses[0]["totalCost"])
+        self.assertEqual(responses[0]["profit"], "-518.01")
+
+    def test_existing_legacy_principal_is_preserved_but_not_recomputed(self):
+        with server.db() as conn:
+            conn.execute("""INSERT INTO holdings(code,name,category,market_value,cost,updated_at,holding_profit,return_rate)
+                VALUES(?,?,?,?,?,?,?,?)""", ("000001", "测试", "宽基指数", "1100.00", "1000.00",
+                                       "2026-09-01", "100.00", "10.00"))
+        self.assertEqual(self.post("/api/holdings", {"code": "000001", "name": "测试",
+            "market_value": "1200", "holding_profit": "200", "return_rate": "20"})[0], 200)
+        with server.db() as conn:
+            self.assertEqual(conn.execute("SELECT cost FROM holdings").fetchone()[0], "1000.00")
+
+    def test_code_correction_moves_history_and_strategy_across_devices(self):
+        with server.db() as conn:
+            conn.execute("""INSERT INTO holdings(code,name,category,market_value,cost,updated_at,holding_profit,return_rate)
+                VALUES(?,?,?,?,?,?,?,?)""", ("000001", "测试", "宽基指数", "100", "90", "2026-09-01", "10", "11.11"))
+            conn.execute("INSERT INTO holding_snapshots VALUES(?,?,?,?,?,?,?,?,?)",
+                         ("2026-09-01", "000001", "000001", "测试", "100", "10", "11.11", "manual", "2026-09-01"))
+            conn.execute("""INSERT INTO fund_strategies(code,mode,daily_amount,per_drop_pct_amount,max_daily_amount,updated_at)
+                VALUES(?,?,?,?,?,?)""", ("000001", "daily", "10", "0", "0", "2026-09-01"))
+        stale = sync_engine.export_data(server.DB)
+        stale_db = server.DATA / "stale.db"
+        shutil.copy2(server.DB, stale_db)
+        status, data = self.post("/api/holdings", {"code": "000002", "name": "测试",
+            "market_value": "200", "holding_profit": "20", "return_rate": "11.11"})
+        self.assertEqual(status, 200, data)
+        fresh = sync_engine.export_data(server.DB)
+        for local, remote in ((stale, fresh), (fresh, stale)):
+            merged = sync_engine.merge_vaults(local, remote)
+            self.assertEqual([row["code"] for row in merged["tables"]["holdings"]], ["000002"])
+            self.assertEqual({row["holding_key"] for row in merged["tables"]["holding_snapshots"]}, {"000002"})
+            self.assertEqual([row["code"] for row in merged["tables"]["fund_strategies"]], ["000002"])
+            sync_engine.import_data(stale_db, merged)
+            with server.sqlite3.connect(stale_db) as conn:
+                self.assertEqual(conn.execute("SELECT code FROM holdings").fetchone()[0], "000002")
+                self.assertEqual({row[0] for row in conn.execute("SELECT holding_key FROM holding_snapshots")}, {"000002"})
+                self.assertEqual(conn.execute("SELECT code FROM fund_strategies").fetchone()[0], "000002")
 
     def test_backup_includes_research_and_retired_archive(self):
         handler = server.Handler.__new__(server.Handler)
@@ -146,7 +248,7 @@ class RegressionTest(unittest.TestCase):
             self.assertEqual(self.post("/api/update/install", {})[0], 200)
             thread.assert_not_called()
 
-    def test_history_restore_uses_same_cost_rule_as_save(self):
+    def test_history_restore_does_not_infer_principal(self):
         original = {"code": "000001", "name": "测试", "market_value": "1100", "holding_profit": "100", "return_rate": "20"}
         self.assertEqual(self.post("/api/holdings", original)[0], 200)
         with server.db() as conn:
@@ -156,7 +258,7 @@ class RegressionTest(unittest.TestCase):
         status, data = self.post("/api/holdings/history/delete", {"code": "000001", "day": date.today().isoformat()})
         self.assertEqual(status, 200, data)
         with server.db() as conn:
-            self.assertEqual(conn.execute("SELECT cost FROM holdings").fetchone()[0], "500.00")
+            self.assertEqual(conn.execute("SELECT cost FROM holdings").fetchone()[0], "0.00")
 
 
 if __name__ == "__main__":

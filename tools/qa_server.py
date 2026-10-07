@@ -14,6 +14,9 @@ if __name__ == "__main__":
         import server
         import updater
         with server.db() as conn:
+            for day, value in (("2026-08-12", "1000"), ("2026-09-12", "1200"), ("2026-10-01", "0")):
+                conn.execute("INSERT INTO stock_snapshots VALUES(?,?,?,?,?)",
+                             ("600519", day, "排版测试股票", value, "2026-10-01T09:00:00"))
             conn.execute("INSERT INTO accounts(name,account_type,platform,balance,updated_at) VALUES(?,?,?,?,?)",
                          ("测试储蓄账户", "银行存款", "演示银行", "25000", "2026-09-07T09:00:00"))
             conn.execute("INSERT INTO user_preferences VALUES(1,1,1,?)", ("2026-09-07",))

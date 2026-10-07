@@ -25,6 +25,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import certifi
+import stock_snapshots
 
 ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 STATIC = ROOT / "static"
@@ -127,6 +128,7 @@ def db():
     conn.execute("""CREATE TABLE IF NOT EXISTS deleted_records (
       table_name TEXT NOT NULL, record_key TEXT NOT NULL, deleted_at TEXT NOT NULL,
       PRIMARY KEY(table_name,record_key))""")
+    stock_snapshots.create_table(conn)
     return conn
 
 
@@ -162,6 +164,8 @@ def clean_item(raw):
     if not name:
         raise ValueError("缺少基金名称")
     code = re.sub(r"\D", "", str(raw.get("code", "")))[:6]
+    if code and len(code) != 6:
+        raise ValueError("基金代码必须为 6 位数字")
     allowed_categories = {"宽基指数", "行业主题", "股票基金", "混合基金", "债券基金", "货币基金", "黄金商品", "海外基金", "其他基金"}
     category = str(raw.get("category", "宽基指数")).strip()
     if category not in allowed_categories:
@@ -178,11 +182,8 @@ def clean_item(raw):
         raise ValueError("收益率格式不正确")
     if reported_rate < -100:
         raise ValueError("收益率不能低于 -100%")
-    rate = reported_rate / 100
-    estimated_cost = profit / rate if rate and profit / rate >= 0 else value - profit
-    market_value, cost = money(value), money(max(estimated_cost, Decimal("0")))
-    return {"code": code, "name": name, "category": category, "market_value": market_value,
-            "cost": cost, "holding_profit": money(abs(profit)) if profit >= 0 else "-" + money(abs(profit)),
+    return {"code": code, "name": name, "category": category, "market_value": money(value),
+            "holding_profit": money(abs(profit)) if profit >= 0 else "-" + money(abs(profit)),
             "return_rate": str(reported_rate.quantize(Decimal("0.01")))}
 
 
@@ -358,8 +359,36 @@ def clean_account(raw):
 def save_asset_snapshot(conn, now):
     fund = Decimal(str(conn.execute("SELECT COALESCE(SUM(market_value + 0),0) FROM holdings WHERE archived_at IS NULL").fetchone()[0]))
     account = Decimal(str(conn.execute("SELECT COALESCE(SUM(balance + 0),0) FROM accounts").fetchone()[0]))
+    stocks = sum((Decimal(row["market_value"]) for row in stock_snapshots.positions_on(conn)), Decimal("0"))
     conn.execute("INSERT OR REPLACE INTO portfolio_snapshots VALUES(?,?,?,?)",
-                 (datetime.now().date().isoformat(), money(fund + account), "manual", now))
+                 (datetime.now().date().isoformat(), money(fund + account + stocks), "manual", now))
+
+
+def rekey_holding_records(conn, old, item, now):
+    old_key = old["code"] or "name:" + old["name"]
+    new_key = item["code"] or "name:" + item["name"]
+    if old_key == new_key:
+        return
+    for snapshot in conn.execute("SELECT * FROM holding_snapshots WHERE holding_key=?", (old_key,)).fetchall():
+        newer = conn.execute("SELECT created_at FROM holding_snapshots WHERE day=? AND holding_key=?",
+                             (snapshot["day"], new_key)).fetchone()
+        if newer is None or snapshot["created_at"] > newer["created_at"]:
+            conn.execute("INSERT OR REPLACE INTO holding_snapshots VALUES(?,?,?,?,?,?,?,?,?)",
+                         (snapshot["day"], new_key, item["code"] or None, snapshot["name"],
+                          snapshot["market_value"], snapshot["holding_profit"], snapshot["return_rate"],
+                          snapshot["source"], snapshot["created_at"]))
+        conn.execute("DELETE FROM holding_snapshots WHERE day=? AND holding_key=?",
+                     (snapshot["day"], old_key))
+        conn.execute("INSERT OR REPLACE INTO deleted_records VALUES('holding_snapshots',?,?)",
+                     (snapshot["day"] + ":" + old_key, now))
+    if old["code"] and old["code"] != item["code"]:
+        if item["code"] and not conn.execute("SELECT 1 FROM fund_strategies WHERE code=?", (item["code"],)).fetchone():
+            conn.execute("UPDATE fund_strategies SET code=?,updated_at=? WHERE code=?",
+                         (item["code"], now, old["code"]))
+        else:
+            conn.execute("DELETE FROM fund_strategies WHERE code=?", (old["code"],))
+        conn.execute("INSERT OR REPLACE INTO deleted_records VALUES('fund_strategies',?,?)", (old["code"], now))
+    conn.execute("INSERT OR REPLACE INTO deleted_records VALUES('holdings',?,?)", (old_key, now))
 
 
 def inferred_holding_flow(conn, holding_key):
@@ -493,6 +522,14 @@ class Handler(SimpleHTTPRequestHandler):
             with db() as conn: rows=[dict(r) for r in conn.execute(
               "SELECT * FROM fund_market_daily WHERE code=? ORDER BY day DESC LIMIT 365",(code,))]
             self.json_response({"history":rows}); return
+        if self.path == "/api/stocks" or self.path.startswith("/api/stocks?"):
+            day = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("day", [datetime.now().date().isoformat()])[0]
+            try:
+                with db() as conn: result = stock_snapshots.dated_view(conn, day)
+                self.json_response(result)
+            except ValueError as exc:
+                self.json_response({"error": str(exc)}, 400)
+            return
         if self.path == "/api/market":
             indices=[]; updated_at=""
             with db() as conn:
@@ -507,6 +544,7 @@ class Handler(SimpleHTTPRequestHandler):
                 rows = [dict(r) for r in conn.execute("SELECT * FROM holdings WHERE archived_at IS NULL ORDER BY market_value + 0 DESC")]
                 archived = [dict(r) for r in conn.execute("SELECT * FROM holdings WHERE archived_at IS NOT NULL ORDER BY archived_at DESC")]
                 accounts = [dict(r) for r in conn.execute("SELECT * FROM accounts ORDER BY balance + 0 DESC")]
+                stocks = stock_snapshots.positions_on(conn)
                 snapshots = list(reversed([dict(r) for r in conn.execute("SELECT * FROM portfolio_snapshots ORDER BY day DESC LIMIT 365")]))
                 for row in rows:
                     market=conn.execute("SELECT day,unit_nav,cumulative_nav,daily_change_pct FROM fund_market_daily WHERE code=? ORDER BY day DESC LIMIT 1",(row.get("code"),)).fetchone()
@@ -521,16 +559,18 @@ class Handler(SimpleHTTPRequestHandler):
                     row["inferred_flow"]=inferred_holding_flow(conn,row.get("code") or "name:"+row["name"])
             total = sum(Decimal(r["market_value"]) for r in rows)
             account_total = sum(Decimal(r["balance"]) for r in accounts)
-            total_cost = sum(Decimal(r["cost"]) for r in rows)
+            stock_total = sum((Decimal(r["market_value"]) for r in stocks), Decimal("0"))
             reported_profit = sum(Decimal(r["holding_profit"]) for r in rows)
-            self.json_response({"holdings": rows, "archivedHoldings": archived, "accounts": accounts, "total": str(total + account_total),
-                "fundTotal": str(total), "accountTotal": str(account_total), "totalCost": str(total_cost),
+            self.json_response({"holdings": rows, "archivedHoldings": archived, "accounts": accounts, "stockPositions": stocks,
+                "total": str(total + account_total + stock_total), "fundTotal": str(total),
+                "accountTotal": str(account_total), "stockTotal": str(stock_total), "totalCost": None,
                 "profit": str(reported_profit), "snapshots": snapshots})
             return
         if self.path == "/api/manage":
             with db() as conn:
                 counts = {"accounts": conn.execute("SELECT COUNT(*) FROM accounts").fetchone()[0],
-                          "holdings": conn.execute("SELECT COUNT(*) FROM holdings WHERE archived_at IS NULL").fetchone()[0],
+                          "holdings": conn.execute("SELECT COUNT(*) FROM holdings WHERE archived_at IS NULL").fetchone()[0]
+                                      + sum(not row["closed"] for row in stock_snapshots.positions_on(conn)),
                           "archived": conn.execute("SELECT COUNT(*) FROM holdings WHERE archived_at IS NOT NULL").fetchone()[0],
                           "snapshots": conn.execute("SELECT COUNT(*) FROM holding_snapshots").fetchone()[0]}
                 logs = [dict(r) for r in conn.execute("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 100")]
@@ -547,6 +587,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "exportedAt": datetime.now().isoformat(),
                     "accounts": [dict(r) for r in conn.execute("SELECT * FROM accounts ORDER BY id")],
                     "holdings": [dict(r) for r in conn.execute("SELECT * FROM holdings ORDER BY id")],
+                    "stockSnapshots": [dict(r) for r in conn.execute("SELECT * FROM stock_snapshots ORDER BY day,symbol")],
                     "holdingSnapshots": [dict(r) for r in conn.execute("SELECT * FROM holding_snapshots ORDER BY day,holding_key")],
                     "fundMarketDaily": [dict(r) for r in conn.execute("SELECT * FROM fund_market_daily ORDER BY day,code")],
                     "marketIndexDaily": [dict(r) for r in conn.execute("SELECT * FROM market_index_daily ORDER BY day,code")],
@@ -608,15 +649,31 @@ class Handler(SimpleHTTPRequestHandler):
         if self.reject_untrusted_request():
             return
         try:
+            if self.path == "/api/stocks":
+                with db() as conn:
+                    result = stock_snapshots.save_snapshot(conn, self.read_json())
+                    now = datetime.now().isoformat(timespec="microseconds")
+                    audit(conn, "STOCK_SNAPSHOT_SAVED", "保存股票快照：" + result["symbol"], result, now)
+                    save_asset_snapshot(conn, now)
+                self.json_response({"ok": True, **result}); return
             if self.path == "/api/holdings":
                 item = clean_item(self.read_json())
                 now = datetime.now().isoformat(timespec="microseconds")
                 with db() as conn:
-                    existing = conn.execute("SELECT id FROM holdings WHERE code=? OR name=? LIMIT 1",
-                                            (item["code"], item["name"])).fetchone()
-                    values = (item["code"] or None, item["name"], item["category"], item["market_value"], item["cost"], now,
+                    by_code = conn.execute("SELECT id,code,name,cost FROM holdings WHERE code=?",
+                                           (item["code"],)).fetchone() if item["code"] else None
+                    by_name = conn.execute("SELECT id,code,name,cost FROM holdings WHERE name=?",
+                                           (item["name"],)).fetchone()
+                    if by_code and by_name and by_code["id"] != by_name["id"]:
+                        raise ValueError("基金代码和名称分别属于不同持仓，请先核对")
+                    existing = by_code or by_name
+                    # Preserve old cost data for backups, but never derive a new principal
+                    # from rounded platform profit or return-rate fields.
+                    legacy_cost = existing["cost"] if existing else "0.00"
+                    values = (item["code"] or None, item["name"], item["category"], item["market_value"], legacy_cost, now,
                               item["holding_profit"], item["return_rate"])
                     if existing:
+                        rekey_holding_records(conn, existing, item, now)
                         conn.execute("UPDATE holdings SET code=?,name=?,category=?,market_value=?,cost=?,updated_at=?,holding_profit=?,return_rate=?,archived_at=NULL WHERE id=?",
                                      values + (existing[0],))
                     else:
@@ -722,9 +779,8 @@ class Handler(SimpleHTTPRequestHandler):
                     conn.execute("INSERT OR REPLACE INTO deleted_records VALUES('holding_snapshots',?,?)", (day + ":" + code, now))
                     latest = conn.execute("SELECT * FROM holding_snapshots WHERE holding_key=? ORDER BY day DESC LIMIT 1", (code,)).fetchone()
                     if latest:
-                        cost = clean_item(dict(latest))["cost"]
-                        conn.execute("UPDATE holdings SET market_value=?,cost=?,holding_profit=?,return_rate=?,updated_at=? WHERE code=?",
-                                     (latest["market_value"], cost, latest["holding_profit"], latest["return_rate"], now, code))
+                        conn.execute("UPDATE holdings SET market_value=?,holding_profit=?,return_rate=?,updated_at=? WHERE code=?",
+                                     (latest["market_value"], latest["holding_profit"], latest["return_rate"], now, code))
                     else:
                         conn.execute("UPDATE holdings SET archived_at=?,updated_at=? WHERE code=?", (now, now, code))
                     audit(conn, "HOLDING_SNAPSHOT_DELETED", "删除基金历史快照：" + old["name"],
@@ -770,7 +826,10 @@ class Handler(SimpleHTTPRequestHandler):
             if self.path == "/api/sync/run":
                 from sync_engine import sync
                 password = str(self.read_json().get("password", ""))
-                self.json_response(sync(DB, password))
+                result = sync(DB, password)
+                with db() as conn:
+                    save_asset_snapshot(conn, datetime.now().isoformat(timespec="microseconds"))
+                self.json_response(result)
                 return
             if self.path == "/api/scholar/import":
                 raw=self.read_json(); profile=raw.get("profile") or {}; metrics=profile.get("metrics") or {}

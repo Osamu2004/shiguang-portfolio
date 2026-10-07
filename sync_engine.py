@@ -31,7 +31,7 @@ ITERATIONS = 600_000
 # Retired records remain in old local databases and encrypted vaults so a
 # software update never discards the user's previous collection history.
 RETIRED_TABLE_KEYS = {"coins": "id", "coin_collection": "coin_id", "graded_coins": "id"}
-SYNC_TABLES = ("accounts", "holdings", "holding_snapshots", "fund_market_daily", "market_index_daily",
+SYNC_TABLES = ("accounts", "holdings", "holding_snapshots", "stock_snapshots", "fund_market_daily", "market_index_daily",
                "fund_strategies", "user_preferences", "health_daily", "portfolio_snapshots",
                "scholar_profiles", "scholar_snapshots", "scholar_papers", "scholar_paper_snapshots",
                "audit_logs", "deleted_records")
@@ -99,6 +99,7 @@ def _record_key(table, row):
     if table in ("health_daily", "portfolio_snapshots"):
         return str(row["day"])
     if table == "holding_snapshots": return str(row["day"]) + ":" + str(row["holding_key"])
+    if table == "stock_snapshots": return str(row["symbol"]) + ":" + str(row["day"])
     if table in ("fund_market_daily", "market_index_daily"): return str(row["code"]) + ":" + str(row["day"])
     if table == "fund_strategies": return str(row["code"])
     if table == "user_preferences": return str(row["id"])
@@ -145,6 +146,21 @@ def merge_vaults(local, remote):
         result["tables"][table] = [r for r in rows if _record_key(table, r) != key]
         tombstones.append(deleted)
     result["tables"]["deleted_records"] = tombstones
+    # A corrected fund code changes its sync key. The database also requires
+    # names to be unique, so keep only the newest row for each code or name.
+    holdings = sorted(result["tables"]["holdings"],
+                      key=lambda row: (_record_stamp(row), json.dumps(row, sort_keys=True, ensure_ascii=False)),
+                      reverse=True)
+    seen_codes, seen_names, unique_holdings = set(), set(), []
+    for row in holdings:
+        code, name = row.get("code"), row["name"]
+        if (code and code in seen_codes) or name in seen_names:
+            continue
+        unique_holdings.append(row)
+        if code:
+            seen_codes.add(code)
+        seen_names.add(name)
+    result["tables"]["holdings"] = unique_holdings
     return result
 
 
@@ -170,6 +186,11 @@ def import_data(db_path, payload):
         for row in payload["tables"].get("holding_snapshots", []):
             conn.execute("INSERT OR REPLACE INTO holding_snapshots VALUES(?,?,?,?,?,?,?,?,?)", tuple(row.get(k) for k in
               ("day","holding_key","code","name","market_value","holding_profit","return_rate","source","created_at")))
+        for row in payload["tables"].get("stock_snapshots", []):
+            conn.execute("""INSERT INTO stock_snapshots VALUES(?,?,?,?,?)
+              ON CONFLICT(symbol,day) DO UPDATE SET name=excluded.name,market_value=excluded.market_value,
+              updated_at=excluded.updated_at WHERE excluded.updated_at>=stock_snapshots.updated_at""",
+              tuple(row.get(k) for k in ("symbol","day","name","market_value","updated_at")))
         for row in payload["tables"].get("fund_market_daily", []):
             conn.execute("INSERT OR REPLACE INTO fund_market_daily VALUES(?,?,?,?,?,?,?)", tuple(row.get(k) for k in
               ("code","day","unit_nav","cumulative_nav","daily_change_pct","source","fetched_at")))
@@ -212,6 +233,9 @@ def import_data(db_path, payload):
                 conn.execute("DELETE FROM holding_snapshots WHERE day=? AND holding_key=? AND created_at<=?", (day, key, row["deleted_at"]))
             if row.get("table_name") == "holdings":
                 conn.execute("DELETE FROM holdings WHERE (code=? OR (code IS NULL AND 'name:' || name=?)) AND updated_at<=?", (row["record_key"], row["record_key"], row["deleted_at"]))
+            if row.get("table_name") == "fund_strategies":
+                conn.execute("DELETE FROM fund_strategies WHERE code=? AND updated_at<=?",
+                             (row["record_key"], row["deleted_at"]))
         conn.commit()
     finally:
         conn.close()

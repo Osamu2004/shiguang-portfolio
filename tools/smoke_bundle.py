@@ -68,6 +68,20 @@ with tempfile.TemporaryDirectory(prefix="shiguang-native-") as data:
             with urllib.request.urlopen(base + "/api/state", timeout=5) as response:
                 saved = json.load(response)
             assert len(saved["accounts"]) == 1 and saved["accounts"][0]["balance"] == "12.34"
+            for day, value in (("2026-08-12", "1000"), ("2026-10-01", "0")):
+                stock_body = json.dumps({"day": day, "symbol": "600519", "name": "打包测试股票",
+                                         "market_value": value}).encode()
+                request = urllib.request.Request(base + "/api/stocks", data=stock_body,
+                                                 headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(request, timeout=5) as response:
+                    assert response.status == 200
+            with urllib.request.urlopen(base + "/api/stocks?day=2026-08-12", timeout=5) as response:
+                august = json.load(response)
+            with urllib.request.urlopen(base + "/api/state", timeout=5) as response:
+                after_close = json.load(response)
+            assert august["positions"][0]["market_value"] == "1000.00"
+            assert after_close["stockTotal"] == "0.00" and after_close["total"] == "12.34"
+            checks["stock August/October lifecycle"] = {"status": 200}
             checks["same-origin POST /api/accounts"] = {"status": 200}
             checks["foreign-origin POST /api/accounts"] = {"status": 403}
             (out / "native-smoke.json").write_text(json.dumps(checks, indent=2))
