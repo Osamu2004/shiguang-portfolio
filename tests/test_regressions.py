@@ -135,17 +135,18 @@ class RegressionTest(unittest.TestCase):
         self.assertEqual(self.post("/api/accounts", payload,
                                    origin="http://127.0.0.1:8787")[0], 200)
 
-    def test_extension_access_is_limited_to_scholar_import(self):
+    def test_retired_scholar_extension_cannot_access_local_data(self):
         origin = "chrome-extension://abcdefghijklmnopabcdefghijklmnop"
         handler = server.Handler.__new__(server.Handler)
         handler.path = "/api/state"
         handler.headers = {"Host": "127.0.0.1:8787", "Origin": origin}
         self.assertFalse(handler.request_allowed())
-        self.assertEqual(handler.extension_origin(), "")
-        status, data = self.post("/api/scholar/import", {
+        status, _ = self.post("/api/scholar/import", {
             "profile": {"id": "test", "name": "测试研究者"}, "papers": []
         }, origin=origin)
-        self.assertEqual(status, 200, data)
+        self.assertEqual(status, 403)
+        self.assertEqual(self.post("/api/scholar/import", {})[0], 404)
+        self.assertEqual(self.post("/api/scholar/config", {})[0], 404)
 
     def test_repeated_save_does_not_collide_in_audit_log(self):
         with server.db() as conn:
@@ -219,7 +220,22 @@ class RegressionTest(unittest.TestCase):
                 self.assertEqual({row[0] for row in conn.execute("SELECT holding_key FROM holding_snapshots")}, {"000002"})
                 self.assertEqual(conn.execute("SELECT code FROM fund_strategies").fetchone()[0], "000002")
 
-    def test_backup_includes_research_and_retired_archive(self):
+    def test_retired_scholar_data_survives_backup_and_sync_without_new_tables(self):
+        with server.db() as conn:
+            tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            self.assertFalse(any(name.startswith("scholar_") for name in tables))
+            for schema in sync_engine.LEGACY_SCHOLAR_SCHEMAS.values():
+                conn.execute(schema)
+            conn.execute("INSERT INTO scholar_profiles VALUES(?,?,?,?,?,?)",
+                         ("legacy-id", "旧科研档案", "单位", "[]", "https://example.com", "2026-09-01"))
+            conn.execute("INSERT INTO scholar_snapshots VALUES(?,?,?,?,?,?,?,?,?,?)",
+                         ("legacy-id", "2026-09-01", 42, 12, 3, 2, 1, 1, "{}", "2026-09-01"))
+            conn.execute("INSERT INTO scholar_papers VALUES(?,?,?,?,?,?,?,?)",
+                         ("legacy-id", "paper-1", "旧论文", "作者", "期刊", 2025, "https://example.com/paper", "2026-09-01"))
+            conn.execute("INSERT INTO scholar_paper_snapshots VALUES(?,?,?,?,?)",
+                         ("legacy-id", "paper-1", "2026-09-01", 7, "2026-09-01"))
+            conn.execute("INSERT INTO scholar_settings VALUES(?,?,?,?)",
+                         (1, "https://example.com", 1, "2026-09-01"))
         handler = server.Handler.__new__(server.Handler)
         handler.path = "/api/export"
         handler.wfile = io.BytesIO()
@@ -228,8 +244,20 @@ class RegressionTest(unittest.TestCase):
         handler.end_headers = lambda: None
         handler.do_GET()
         payload = json.loads(handler.wfile.getvalue())
-        for key in ("legacyArchive", "scholarProfiles", "scholarSnapshots", "scholarPapers", "scholarPaperSnapshots", "scholarSettings"):
-            self.assertIn(key, payload)
+        self.assertEqual(payload["legacyArchive"]["scholar_profiles"][0]["name"], "旧科研档案")
+        self.assertEqual(payload["legacyArchive"]["scholar_settings"][0]["auto_open"], 1)
+        self.assertNotIn("scholarProfiles", payload)
+        merged = sync_engine.merge_vaults({"tables": {}}, sync_engine.export_data(server.DB))
+        fresh = Path(self.folder.name) / "fresh.db"
+        with patch.object(server, "DB", fresh):
+            server.db().close()
+        sync_engine.import_data(fresh, merged)
+        with server.sqlite3.connect(fresh) as conn:
+            self.assertEqual(conn.execute("SELECT name FROM scholar_profiles").fetchone()[0], "旧科研档案")
+            self.assertEqual(conn.execute("SELECT citations_all FROM scholar_snapshots").fetchone()[0], 42)
+            self.assertEqual(conn.execute("SELECT title FROM scholar_papers").fetchone()[0], "旧论文")
+            self.assertEqual(conn.execute("SELECT citations FROM scholar_paper_snapshots").fetchone()[0], 7)
+            self.assertEqual(conn.execute("SELECT auto_open FROM scholar_settings").fetchone()[0], 1)
 
     def test_static_path_stays_inside_static_directory(self):
         handler = server.Handler.__new__(server.Handler)
@@ -261,12 +289,14 @@ class RegressionTest(unittest.TestCase):
 
     def test_old_preference_column_is_ignored(self):
         with server.db() as conn:
+            conn.execute("ALTER TABLE user_preferences ADD COLUMN show_research INTEGER NOT NULL DEFAULT 1")
             conn.execute("ALTER TABLE user_preferences ADD COLUMN show_coins INTEGER NOT NULL DEFAULT 1")
-        status, _ = self.post("/api/preferences", {"show_health": True, "show_research": False})
+        status, _ = self.post("/api/preferences", {"show_health": True, "show_research": True})
         self.assertEqual(status, 200)
         synced = sync_engine.export_data(server.DB)["tables"]["user_preferences"][0]
         self.assertEqual(synced["show_health"], 1)
         self.assertNotIn("show_coins", synced)
+        self.assertNotIn("show_research", synced)
         remote = {"tables": {"user_preferences": [{"id": 1, "show_health": 0,
                   "show_research": 1, "show_coins": 1, "updated_at": "2099-01-01"}]}}
         merged = sync_engine.merge_vaults({"tables": {}}, remote)

@@ -33,13 +33,14 @@ with tempfile.TemporaryDirectory(prefix="shiguang-native-") as data:
                 raise RuntimeError("Native app did not start")
             assert state["holdings"] == [] and state["accounts"] == []
             checks = {}
-            for endpoint in ("/", "/api/state", "/api/health", "/api/export", "/api/scholar-extension"):
+            for endpoint in ("/", "/api/state", "/api/health", "/api/export"):
                 with urllib.request.urlopen(base + endpoint, timeout=5) as response:
                     content = response.read()
                     assert response.status == 200 and content
                     checks[endpoint] = {"status": response.status, "bytes": len(content)}
             for endpoint in ("/api/coins", "/api/coin-catalog", "/api/china-coin-catalog",
-                             "/api/australia-coin-catalog", "/api/graded-coins", "/coins.css", "/api/stocks"):
+                             "/api/australia-coin-catalog", "/api/graded-coins", "/coins.css", "/api/stocks",
+                             "/api/scholar", "/api/scholar/config", "/api/scholar-extension"):
                 try:
                     urllib.request.urlopen(base + endpoint, timeout=5)
                     raise AssertionError(f"Retired endpoint is still available: {endpoint}")

@@ -16,7 +16,7 @@ const assert = require('node:assert/strict');
     await page.setViewportSize({ width, height: 900 });
     await page.goto('http://127.0.0.1:18787');
     await page.waitForFunction(() => document.querySelector('#holdingList .fund-row'));
-    for (const id of ['dashboard', 'holdings', 'health', 'research', 'manage', 'sync', 'market']) {
+    for (const id of ['dashboard', 'holdings', 'health', 'manage', 'sync', 'market']) {
       await page.evaluate(id => go(id), id);
       if (!await page.locator('#' + id).count()) continue;
       const layout = await page.evaluate(() => ({
@@ -26,17 +26,6 @@ const assert = require('node:assert/strict');
         }).slice(0, 8).map(e => e.id || e.className)
       }));
       results.push({ width, page: id, ...layout });
-      if (id === 'research') {
-        const actions = await page.locator('.scholar-actions > *:visible').evaluateAll(elements => elements.map(e => {
-          const { left, top, right, bottom } = e.getBoundingClientRect();
-          return { left, top, right, bottom };
-        }));
-        for (let i = 0; i < actions.length; i++) for (let j = i + 1; j < actions.length; j++) {
-          const a = actions[i], b = actions[j];
-          assert(!(a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top),
-            `Research actions overlap at ${width}px`);
-        }
-      }
       if (id === 'dashboard' && width <= 600) {
         const cards = await page.locator('.personal-kpis article').evaluateAll(elements => elements.map(e => e.getBoundingClientRect().top));
         assert(cards[2] > cards[0], `Dashboard KPI cards are hidden in a horizontal strip at ${width}px`);
@@ -48,6 +37,7 @@ const assert = require('node:assert/strict');
   await page.setViewportSize({width: 390, height: 740});
   await page.goto('http://127.0.0.1:18787');
   await page.waitForFunction(() => document.querySelector('#holdingList .fund-row'));
+  assert.equal(await page.locator('#research, [data-page="research"], [data-module="research"]').count(), 0);
   await page.locator('.kpi-link').click();
   assert(await page.locator('#holdings').evaluate(element => element.classList.contains('active')));
   await page.waitForFunction(() => document.querySelector('#holdingCalendarRows').textContent.includes('排版测试 ETF'));
@@ -123,15 +113,6 @@ const assert = require('node:assert/strict');
   await page.locator('#healthForm [name="sleep_minutes"]').fill('480');
   await page.locator('#healthForm button').click();
   await page.waitForFunction(() => document.querySelector('#stepsKpi').textContent.includes('8,000'));
-  await page.evaluate(() => go('research'));
-  await page.locator('#scholarConfig [name="profile_url"]').fill('https://scholar.google.com/citations?user=test123');
-  await page.locator('#scholarConfig button').click();
-  await page.waitForFunction(() => document.querySelector('#scholarProfileLink').getAttribute('href')?.includes('test123'));
-  await page.locator('#scholarImport').setInputFiles({
-    name: 'scholar.json', mimeType: 'application/json',
-    buffer: Buffer.from(JSON.stringify({profile:{id:'test123',name:'浏览器回归研究者',metrics:{citationsAll:42}},papers:[]}))
-  });
-  await page.waitForFunction(() => document.querySelector('#scholarName').textContent === '浏览器回归研究者');
   await page.evaluate(() => go('manage'));
   const archivedBefore = await page.locator('#archivedHoldingList .archived').count();
   page.once('dialog', dialog => dialog.accept());

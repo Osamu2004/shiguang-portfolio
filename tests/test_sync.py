@@ -97,6 +97,7 @@ class SyncTest(unittest.TestCase):
         merged=sync.merge_vaults(local,{"updatedAt":"1","tables":{}})
         self.assertEqual(merged["tables"]["user_preferences"][0]["show_health"],0)
         self.assertNotIn("show_coins", merged["tables"]["user_preferences"][0])
+        self.assertNotIn("show_research", merged["tables"]["user_preferences"][0])
 
     def test_deleted_snapshot_tombstone_is_synchronized(self):
         local={"updatedAt":"2","tables":{"deleted_records":[

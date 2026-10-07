@@ -25,7 +25,7 @@ if __name__ == "__main__":
                               "QA fixture", "2026-10-01T09:00:00"))
             conn.execute("INSERT INTO accounts(name,account_type,platform,balance,updated_at) VALUES(?,?,?,?,?)",
                          ("测试储蓄账户", "银行存款", "演示银行", "25000", "2026-09-07T09:00:00"))
-            conn.execute("INSERT INTO user_preferences VALUES(1,1,1,?)", ("2026-09-07",))
+            conn.execute("INSERT INTO user_preferences VALUES(1,1,?)", ("2026-09-07",))
             for i, category in enumerate(("宽基指数", "海外基金", "债券基金"), 1):
                 code = f"{i:06}"
                 conn.execute("INSERT INTO holdings(code,name,category,market_value,cost,holding_profit,return_rate,updated_at) VALUES(?,?,?,?,?,?,?,?)",

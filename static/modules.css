@@ -4,29 +4,13 @@
   display: grid;
   gap: 10px;
 }
-.scholar-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-}
-.scholar-actions .primary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  text-decoration: none;
-  cursor: pointer;
-}
-#scholarProfileLink:not([href]) { display: none; }
 #accountList,
 #holdingList,
 #holdingList2,
 #healthList,
-#scholarPapers,
 #auditList,
 .personal-kpis,
 .health-kpis,
-.scholar-profile,
 .trend-chart,
 .fund-sparkline,
 input,
@@ -290,7 +274,6 @@ form label {
   .personal-kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: visible; }
   .personal-kpis article { min-width: 0; padding: 18px 14px; }
   .personal-kpis strong { font-size: clamp(18px, 5vw, 24px); overflow-wrap: anywhere; }
-  .scholar-actions > .primary, .scholar-actions > #scholarProfileLink { width: 100%; }
   .holding-form { grid-template-columns: minmax(0, 1fr); }
   .holding-form > button { width: 100%; }
   .fund-row, .fund-row.manage-row {

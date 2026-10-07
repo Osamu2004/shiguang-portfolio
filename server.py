@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """拾光投资 - 零依赖的本地投资组合服务。"""
 import cgi
-import hashlib
 import json
 import os
 import re
@@ -17,7 +16,6 @@ import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
-import zipfile
 import concurrent.futures
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -29,7 +27,6 @@ import holding_calendar
 
 ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 STATIC = ROOT / "static"
-RESOURCES = ROOT / "resources"
 DATA = Path(os.getenv("SHIGUANG_DATA_DIR", str(Path(__file__).resolve().parent / "data")))
 DB = DATA / "portfolio.db"
 SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
@@ -107,21 +104,7 @@ def db():
         conn.execute("ALTER TABLE fund_strategies ADD COLUMN drawdown_allocations TEXT NOT NULL DEFAULT '20,20,30,30'")
     conn.execute("""CREATE TABLE IF NOT EXISTS user_preferences (
       id INTEGER PRIMARY KEY CHECK(id=1),show_health INTEGER NOT NULL DEFAULT 0,
-      show_research INTEGER NOT NULL DEFAULT 0,updated_at TEXT NOT NULL)""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS scholar_profiles (
-      profile_id TEXT PRIMARY KEY,name TEXT NOT NULL,affiliation TEXT,interests TEXT,profile_url TEXT,updated_at TEXT NOT NULL)""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS scholar_snapshots (
-      profile_id TEXT NOT NULL,day TEXT NOT NULL,citations_all INTEGER NOT NULL,citations_recent INTEGER,
-      h_index_all INTEGER NOT NULL,h_index_recent INTEGER,i10_all INTEGER NOT NULL,i10_recent INTEGER,
-      yearly_citations TEXT NOT NULL DEFAULT '{}',captured_at TEXT NOT NULL,PRIMARY KEY(profile_id,day))""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS scholar_papers (
-      profile_id TEXT NOT NULL,paper_id TEXT NOT NULL,title TEXT NOT NULL,authors TEXT,venue TEXT,
-      publication_year INTEGER,url TEXT,updated_at TEXT NOT NULL,PRIMARY KEY(profile_id,paper_id))""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS scholar_paper_snapshots (
-      profile_id TEXT NOT NULL,paper_id TEXT NOT NULL,day TEXT NOT NULL,citations INTEGER NOT NULL,
-      captured_at TEXT NOT NULL,PRIMARY KEY(profile_id,paper_id,day))""")
-    conn.execute("""CREATE TABLE IF NOT EXISTS scholar_settings (
-      id INTEGER PRIMARY KEY CHECK(id=1),profile_url TEXT NOT NULL,auto_open INTEGER NOT NULL DEFAULT 1,updated_at TEXT NOT NULL)""")
+      updated_at TEXT NOT NULL)""")
     conn.execute("""CREATE TABLE IF NOT EXISTS audit_logs (
       id TEXT PRIMARY KEY, event_type TEXT NOT NULL, summary TEXT NOT NULL,
       details TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL)""")
@@ -421,14 +404,6 @@ def inferred_holding_flow(conn, holding_key):
 
 
 class Handler(SimpleHTTPRequestHandler):
-    def extension_origin(self):
-        origin = self.headers.get("Origin", "")
-        if self.path == "/api/scholar/import" and origin.startswith(
-            ("chrome-extension://", "extension://", "moz-extension://")
-        ):
-            return origin
-        return ""
-
     def request_allowed(self):
         headers = getattr(self, "headers", {})
         host = headers.get("Host", "")
@@ -442,8 +417,6 @@ class Handler(SimpleHTTPRequestHandler):
         origin = headers.get("Origin", "")
         if not origin:
             return True
-        if self.extension_origin():
-            return True
         try:
             parsed_origin = urllib.parse.urlsplit(origin)
         except ValueError:
@@ -456,16 +429,6 @@ class Handler(SimpleHTTPRequestHandler):
             return False
         self.json_response({"error": "仅接受本机同源请求"}, 403)
         return True
-
-    def do_OPTIONS(self):
-        if not self.request_allowed():
-            self.send_error(403); return
-        origin = self.extension_origin()
-        if not origin:
-            self.send_error(403); return
-        self.send_response(204); self.send_header("Access-Control-Allow-Origin", origin)
-        self.send_header("Vary", "Origin")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type"); self.send_header("Access-Control-Allow-Methods", "POST,OPTIONS"); self.end_headers()
 
     def translate_path(self, path):
         # Use the standard handler's URL decoding and traversal normalization,
@@ -486,10 +449,6 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Cache-Control", "no-store")
-        origin = self.extension_origin()
-        if origin:
-            self.send_header("Access-Control-Allow-Origin", origin)
-            self.send_header("Vary", "Origin")
         self.end_headers()
         self.wfile.write(data)
 
@@ -513,8 +472,8 @@ class Handler(SimpleHTTPRequestHandler):
                 self.json_response({"error": str(exc)}, 404)
             return
         if self.path == "/api/preferences":
-            with db() as conn: row=conn.execute("SELECT show_health,show_research FROM user_preferences WHERE id=1").fetchone()
-            self.json_response(dict(row) if row else {"show_health":0,"show_research":0}); return
+            with db() as conn: row=conn.execute("SELECT show_health FROM user_preferences WHERE id=1").fetchone()
+            self.json_response(dict(row) if row else {"show_health":0}); return
         if self.path.startswith("/api/holdings/history?"):
             code = re.sub(r"\D", "", urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("code", [""])[0])[:6]
             with db() as conn:
@@ -597,7 +556,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "fundMarketDaily": [dict(r) for r in conn.execute("SELECT * FROM fund_market_daily ORDER BY day,code")],
                     "marketIndexDaily": [dict(r) for r in conn.execute("SELECT * FROM market_index_daily ORDER BY day,code")],
                     "fundStrategies": [dict(r) for r in conn.execute("SELECT * FROM fund_strategies ORDER BY code")],
-                    "userPreferences": [dict(r) for r in conn.execute("SELECT id,show_health,show_research,updated_at FROM user_preferences ORDER BY id")],
+                    "userPreferences": [dict(r) for r in conn.execute("SELECT id,show_health,updated_at FROM user_preferences ORDER BY id")],
                     "healthDaily": [dict(r) for r in conn.execute("SELECT * FROM health_daily ORDER BY day")],
                     "portfolioSnapshots": [dict(r) for r in conn.execute("SELECT * FROM portfolio_snapshots ORDER BY day")],
                     "auditLogs": [dict(r) for r in conn.execute("SELECT * FROM audit_logs ORDER BY created_at")],
@@ -605,12 +564,6 @@ class Handler(SimpleHTTPRequestHandler):
                 }
                 from sync_engine import retired_data
                 payload["legacyArchive"] = retired_data(conn)
-                for key, table in (("scholarProfiles", "scholar_profiles"),
-                                   ("scholarSnapshots", "scholar_snapshots"),
-                                   ("scholarPapers", "scholar_papers"),
-                                   ("scholarPaperSnapshots", "scholar_paper_snapshots"),
-                                   ("scholarSettings", "scholar_settings")):
-                    payload[key] = [dict(r) for r in conn.execute("SELECT * FROM " + table)]
             data = json.dumps(payload, ensure_ascii=False, indent=2).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -622,25 +575,6 @@ class Handler(SimpleHTTPRequestHandler):
             from sync_engine import load_config
             self.json_response(load_config())
             return
-        if self.path == "/api/scholar":
-            with db() as conn:
-                profile = conn.execute("SELECT * FROM scholar_profiles ORDER BY updated_at DESC LIMIT 1").fetchone()
-                if not profile: self.json_response({"profile":None,"snapshots":[],"papers":[]}); return
-                pid=profile["profile_id"]
-                snapshots=[dict(r) for r in conn.execute("SELECT * FROM scholar_snapshots WHERE profile_id=? ORDER BY day",(pid,))]
-                papers=[dict(r) for r in conn.execute("""SELECT p.*,(SELECT citations FROM scholar_paper_snapshots s WHERE s.profile_id=p.profile_id AND s.paper_id=p.paper_id ORDER BY day DESC LIMIT 1) citations FROM scholar_papers p WHERE profile_id=? ORDER BY citations DESC,publication_year DESC""",(pid,))]
-            self.json_response({"profile":dict(profile),"snapshots":snapshots,"papers":papers}); return
-        if self.path == "/api/scholar/config":
-            with db() as conn: row=conn.execute("SELECT * FROM scholar_settings WHERE id=1").fetchone()
-            self.json_response(dict(row) if row else {"profile_url":"","auto_open":True}); return
-        if self.path == "/api/scholar-extension":
-            source=RESOURCES / "scholar-extension"; buffer=io.BytesIO()
-            with zipfile.ZipFile(buffer,"w",zipfile.ZIP_DEFLATED) as archive:
-                for path in source.rglob("*"):
-                    if path.is_file(): archive.write(path,path.relative_to(source.parent))
-            data=buffer.getvalue(); self.send_response(200); self.send_header("Content-Type","application/zip")
-            self.send_header("Content-Disposition",'attachment; filename="Shiguang-Scholar-Extension.zip"')
-            self.send_header("Content-Length",str(len(data))); self.end_headers(); self.wfile.write(data); return
         if self.path == "/api/update/check":
             try:
                 from updater import check
@@ -775,8 +709,8 @@ class Handler(SimpleHTTPRequestHandler):
                 self.json_response({"ok":True}); return
             if self.path == "/api/preferences":
                 raw=self.read_json(); now=datetime.now().isoformat(timespec="microseconds")
-                values=tuple(1 if raw.get(key,False) else 0 for key in ("show_health","show_research"))
-                with db() as conn: conn.execute("INSERT OR REPLACE INTO user_preferences (id,show_health,show_research,updated_at) VALUES(1,?,?,?)",values+(now,))
+                enabled = 1 if raw.get("show_health", False) else 0
+                with db() as conn: conn.execute("INSERT OR REPLACE INTO user_preferences (id,show_health,updated_at) VALUES(1,?,?)",(enabled,now))
                 self.json_response({"ok":True}); return
             if self.path in ("/api/holdings/archive", "/api/holdings/restore"):
                 code = re.sub(r"\D", "", str(self.read_json().get("code", "")))[:6]
@@ -877,33 +811,6 @@ class Handler(SimpleHTTPRequestHandler):
                     save_asset_snapshot(conn, datetime.now().isoformat(timespec="microseconds"))
                 self.json_response(result)
                 return
-            if self.path == "/api/scholar/import":
-                raw=self.read_json(); profile=raw.get("profile") or {}; metrics=profile.get("metrics") or {}
-                pid=str(profile.get("id","")).strip()[:80]; name=str(profile.get("name","")).strip()[:120]
-                if not pid or not name: raise ValueError("科研快照缺少个人主页 ID 或姓名")
-                captured=str(raw.get("capturedAt") or datetime.now().isoformat(timespec="microseconds")); day=captured[:10]
-                def whole(v):
-                    try: return max(0,int(v or 0))
-                    except (TypeError,ValueError): raise ValueError("引用指标格式不正确")
-                papers=raw.get("papers") or []; now=datetime.now().isoformat(timespec="microseconds")
-                with db() as conn:
-                    conn.execute("INSERT OR REPLACE INTO scholar_profiles VALUES(?,?,?,?,?,?)",(pid,name,str(profile.get("affiliation", ""))[:200],json.dumps(profile.get("interests") or [],ensure_ascii=False),str(profile.get("url", ""))[:500],now))
-                    conn.execute("INSERT OR REPLACE INTO scholar_snapshots VALUES(?,?,?,?,?,?,?,?,?,?)",(pid,day,whole(metrics.get("citationsAll")),whole(metrics.get("citationsRecent")),whole(metrics.get("hIndexAll")),whole(metrics.get("hIndexRecent")),whole(metrics.get("i10All")),whole(metrics.get("i10Recent")),json.dumps(profile.get("yearlyCitations") or {},ensure_ascii=False),captured))
-                    for p in papers[:2000]:
-                        title=str(p.get("title","")).strip()[:500]
-                        if not title: continue
-                        paper_id=str(p.get("id") or hashlib.sha256(title.encode()).hexdigest()[:24])[:120]
-                        conn.execute("INSERT OR REPLACE INTO scholar_papers VALUES(?,?,?,?,?,?,?,?)",(pid,paper_id,title,str(p.get("authors", ""))[:1000],str(p.get("venue", ""))[:500],whole(p.get("year")) or None,str(p.get("url", ""))[:1000],now))
-                        conn.execute("INSERT OR REPLACE INTO scholar_paper_snapshots VALUES(?,?,?,?,?)",(pid,paper_id,day,whole(p.get("citations")),captured))
-                self.json_response({"ok":True,"papers":len(papers),"day":day}); return
-            if self.path == "/api/scholar/config":
-                raw=self.read_json(); url=str(raw.get("profile_url","")).strip()[:1000]
-                parsed=urllib.parse.urlparse(url); query=urllib.parse.parse_qs(parsed.query)
-                if parsed.scheme!="https" or parsed.hostname!="scholar.google.com" or parsed.path!="/citations" or not query.get("user"):
-                    raise ValueError("请输入完整的 Google Scholar 个人主页地址")
-                now=datetime.now().isoformat(timespec="microseconds")
-                with db() as conn: conn.execute("INSERT OR REPLACE INTO scholar_settings VALUES(1,?,?,?)",(url,1 if raw.get("auto_open",True) else 0,now))
-                self.json_response({"ok":True,"profile_url":url}); return
             if self.path == "/api/update/install":
                 from updater import stage_and_install
                 result = stage_and_install(); self.json_response(result)

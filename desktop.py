@@ -30,10 +30,6 @@ def main():
         return
     url = "http://127.0.0.1:%d" % httpd.server_port
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    with db() as conn:
-        setting = conn.execute("SELECT profile_url,auto_open FROM scholar_settings WHERE id=1").fetchone()
-    if setting and setting[1] and setting[0]:
-        threading.Timer(2.0, lambda: webbrowser.open(setting[0])).start()
     try:
         import webview
         webview.create_window("拾光·个人管理", url, width=1280, height=820, min_size=(900, 640))

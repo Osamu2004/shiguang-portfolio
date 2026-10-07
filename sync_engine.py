@@ -28,12 +28,25 @@ SSL_CONTEXT = ssl.create_default_context(cafile=certifi.where())
 MAGIC = "SGV1"
 AAD = b"shiguang-vault-v1"
 ITERATIONS = 600_000
-# Retired records remain in old local databases and encrypted vaults so a
-# software update never discards the user's previous collection history.
-RETIRED_TABLE_KEYS = {"coins": "id", "coin_collection": "coin_id", "graded_coins": "id"}
+# Retired records remain in old databases and encrypted vaults. Fresh installs
+# create their tables only if an old vault actually contains those records.
+RETIRED_TABLE_KEYS = {
+    "coins": ("id",), "coin_collection": ("coin_id",), "graded_coins": ("id",),
+    "scholar_profiles": ("profile_id",),
+    "scholar_snapshots": ("profile_id", "day"),
+    "scholar_papers": ("profile_id", "paper_id"),
+    "scholar_paper_snapshots": ("profile_id", "paper_id", "day"),
+    "scholar_settings": ("id",),
+}
+LEGACY_SCHOLAR_SCHEMAS = {
+    "scholar_profiles": "CREATE TABLE IF NOT EXISTS scholar_profiles (profile_id TEXT PRIMARY KEY,name TEXT NOT NULL,affiliation TEXT,interests TEXT,profile_url TEXT,updated_at TEXT NOT NULL)",
+    "scholar_snapshots": "CREATE TABLE IF NOT EXISTS scholar_snapshots (profile_id TEXT NOT NULL,day TEXT NOT NULL,citations_all INTEGER NOT NULL,citations_recent INTEGER,h_index_all INTEGER NOT NULL,h_index_recent INTEGER,i10_all INTEGER NOT NULL,i10_recent INTEGER,yearly_citations TEXT NOT NULL DEFAULT '{}',captured_at TEXT NOT NULL,PRIMARY KEY(profile_id,day))",
+    "scholar_papers": "CREATE TABLE IF NOT EXISTS scholar_papers (profile_id TEXT NOT NULL,paper_id TEXT NOT NULL,title TEXT NOT NULL,authors TEXT,venue TEXT,publication_year INTEGER,url TEXT,updated_at TEXT NOT NULL,PRIMARY KEY(profile_id,paper_id))",
+    "scholar_paper_snapshots": "CREATE TABLE IF NOT EXISTS scholar_paper_snapshots (profile_id TEXT NOT NULL,paper_id TEXT NOT NULL,day TEXT NOT NULL,citations INTEGER NOT NULL,captured_at TEXT NOT NULL,PRIMARY KEY(profile_id,paper_id,day))",
+    "scholar_settings": "CREATE TABLE IF NOT EXISTS scholar_settings (id INTEGER PRIMARY KEY CHECK(id=1),profile_url TEXT NOT NULL,auto_open INTEGER NOT NULL DEFAULT 1,updated_at TEXT NOT NULL)",
+}
 SYNC_TABLES = ("accounts", "holdings", "holding_snapshots", "stock_snapshots", "fund_market_daily", "market_index_daily",
                "fund_strategies", "user_preferences", "health_daily", "portfolio_snapshots",
-               "scholar_profiles", "scholar_snapshots", "scholar_papers", "scholar_paper_snapshots",
                "audit_logs", "deleted_records")
 
 
@@ -86,7 +99,7 @@ def export_data(db_path):
         for name in SYNC_TABLES:
             if name == "user_preferences":
                 tables[name] = [dict(r) for r in conn.execute(
-                    "SELECT id,show_health,show_research,updated_at FROM user_preferences")]
+                    "SELECT id,show_health,updated_at FROM user_preferences")]
             else:
                 tables[name] = [dict(r) for r in conn.execute("SELECT * FROM " + name)]
         tables.update(retired_data(conn))
@@ -103,11 +116,7 @@ def _record_key(table, row):
     if table in ("fund_market_daily", "market_index_daily"): return str(row["code"]) + ":" + str(row["day"])
     if table == "fund_strategies": return str(row["code"])
     if table == "user_preferences": return str(row["id"])
-    if table in RETIRED_TABLE_KEYS: return str(row[RETIRED_TABLE_KEYS[table]])
-    if table == "scholar_profiles": return str(row["profile_id"])
-    if table == "scholar_snapshots": return str(row["profile_id"])+":"+str(row["day"])
-    if table == "scholar_papers": return str(row["profile_id"])+":"+str(row["paper_id"])
-    if table == "scholar_paper_snapshots": return str(row["profile_id"])+":"+str(row["paper_id"])+":"+str(row["day"])
+    if table in RETIRED_TABLE_KEYS: return ":".join(str(row[name]) for name in RETIRED_TABLE_KEYS[table])
     if table == "audit_logs": return str(row["id"])
     if table == "deleted_records": return str(row["table_name"]) + ":" + str(row["record_key"])
     return str(row.get("code") or "name:" + row["name"])
@@ -126,7 +135,7 @@ def merge_vaults(local, remote):
         for source in (remote, local):
             for row in source.get("tables", {}).get(table, []):
                 if table == "user_preferences":
-                    row = {key: row[key] for key in ("id", "show_health", "show_research", "updated_at") if key in row}
+                    row = {key: row[key] for key in ("id", "show_health", "updated_at") if key in row}
                 key = _record_key(table, row)
                 previous = merged.get(key)
                 stamp = _record_stamp(row)
@@ -206,14 +215,17 @@ def import_data(db_path, payload):
               row.get("drawdown_thresholds","10,20,35,50"),row.get("drawdown_allocations","20,20,30,30"),row.get("updated_at")))
         for row in payload["tables"].get("user_preferences", []):
             conn.execute("""INSERT OR REPLACE INTO user_preferences
-              (id,show_health,show_research,updated_at) VALUES(?,?,?,?)""", tuple(row.get(k) for k in
-              ("id","show_health","show_research","updated_at")))
+              (id,show_health,updated_at) VALUES(?,?,?)""", tuple(row.get(k) for k in
+              ("id","show_health","updated_at")))
         for row in payload["tables"].get("health_daily", []):
             conn.execute("INSERT OR REPLACE INTO health_daily VALUES(?,?,?,?,?,?,?,?)", tuple(row.get(k) for k in
               ("day","steps","sleep_minutes","resting_heart_rate","active_energy","weight","source","updated_at")))
         for row in payload["tables"].get("portfolio_snapshots", []):
             conn.execute("INSERT OR REPLACE INTO portfolio_snapshots VALUES(?,?,?,?)", tuple(row.get(k) for k in
               ("day","market_value","source","created_at")))
+        for table, schema in LEGACY_SCHOLAR_SCHEMAS.items():
+            if payload["tables"].get(table):
+                conn.execute(schema)
         for row in payload["tables"].get("scholar_profiles", []):
             conn.execute("INSERT OR REPLACE INTO scholar_profiles VALUES(?,?,?,?,?,?)",tuple(row.get(k) for k in ("profile_id","name","affiliation","interests","profile_url","updated_at")))
         for row in payload["tables"].get("scholar_snapshots", []):
@@ -222,6 +234,8 @@ def import_data(db_path, payload):
             conn.execute("INSERT OR REPLACE INTO scholar_papers VALUES(?,?,?,?,?,?,?,?)",tuple(row.get(k) for k in ("profile_id","paper_id","title","authors","venue","publication_year","url","updated_at")))
         for row in payload["tables"].get("scholar_paper_snapshots", []):
             conn.execute("INSERT OR REPLACE INTO scholar_paper_snapshots VALUES(?,?,?,?,?)",tuple(row.get(k) for k in ("profile_id","paper_id","day","citations","captured_at")))
+        for row in payload["tables"].get("scholar_settings", []):
+            conn.execute("INSERT OR REPLACE INTO scholar_settings VALUES(?,?,?,?)",tuple(row.get(k) for k in ("id","profile_url","auto_open","updated_at")))
         for row in payload["tables"].get("audit_logs", []):
             conn.execute("INSERT OR IGNORE INTO audit_logs VALUES(?,?,?,?,?)", tuple(row.get(k) for k in
               ("id","event_type","summary","details","created_at")))
