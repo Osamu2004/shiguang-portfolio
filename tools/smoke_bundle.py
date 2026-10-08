@@ -1,4 +1,4 @@
-"""Launch the built macOS app with a temporary ledger and check its HTTP API."""
+"""Launch a built Windows/macOS app with a temporary ledger and check its API."""
 import json
 import os
 import subprocess
@@ -11,12 +11,16 @@ from pathlib import Path
 
 root = Path(__file__).resolve().parents[1]
 app = Path(sys.argv[1]) if len(sys.argv) > 1 else root / "dist/Shiguang.app"
+executable = app / "Shiguang.exe" if os.name == "nt" else app / "Contents/MacOS/Shiguang"
+if not executable.is_file():
+    raise SystemExit("Missing bundled executable: " + str(executable))
 out = root / "qa-output"
 out.mkdir(exist_ok=True)
 with tempfile.TemporaryDirectory(prefix="shiguang-native-") as data:
     with (out / "native.log").open("w") as log:
-        proc = subprocess.Popen([str(app / "Contents/MacOS/Shiguang")],
-                                env={**os.environ, "SHIGUANG_DATA_DIR": data, "PORT": "18788"},
+        proc = subprocess.Popen([str(executable)],
+                                env={**os.environ, "SHIGUANG_DATA_DIR": data, "PORT": "18788",
+                                     "SHIGUANG_HEADLESS": "1"},
                                 stdout=log, stderr=log)
         try:
             base = "http://127.0.0.1:18788"
