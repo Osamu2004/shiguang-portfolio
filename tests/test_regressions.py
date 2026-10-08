@@ -4,9 +4,11 @@ import json
 import shutil
 import tempfile
 import unittest
+from datetime import date
 from pathlib import Path
 from unittest.mock import patch
 
+import allocation_plan
 import server
 import sync_engine
 
@@ -44,6 +46,86 @@ class RegressionTest(unittest.TestCase):
         handler.json_response = lambda data, status=200: responses.append((status, data))
         handler.do_GET()
         return responses[0]
+
+    def test_allocation_plan_caps_monthly_cash_and_previews_after_buy_weights(self):
+        for code, value in (("000001", "800"), ("000002", "200")):
+            self.assertEqual(self.post("/api/holdings", {"code": code, "name": "基金"+code,
+                "category": "ETF", "market_value": value, "holding_profit": "0", "return_rate": "0"})[0], 200)
+        self.assertEqual(self.post("/api/accounts", {"name":"现金", "account_type":"现金",
+            "platform":"现金", "balance":"1000"})[0], 200)
+        status, _ = self.post("/api/allocation-plan", {"monthly_budget":"100", "monthly_spent":"20",
+            "target_weights":{"000001":"50", "000002":"50"}})
+        self.assertEqual(status, 200)
+        plan = self.get_json("/api/state")[1]["allocationPlan"]
+        self.assertTrue(plan["ready"])
+        self.assertEqual((plan["remaining"], plan["allocated"], plan["unallocated"]),
+                         ("80.00", "80.00", "0.00"))
+        self.assertEqual({r["code"]:r["buy_amount"] for r in plan["rows"]},
+                         {"000001":"0.00", "000002":"80.00"})
+        self.assertEqual({r["code"]:r["after_weight"] for r in plan["rows"]},
+                         {"000001":"74.07", "000002":"25.93"})
+        self.assertEqual(self.get_json("/api/state")[1]["accounts"][0]["balance"], "1000.00")
+
+    def test_allocation_plan_rejects_incomplete_or_excess_weights(self):
+        for code in ("000001", "000002"):
+            self.post("/api/holdings", {"code":code, "name":"基金"+code,
+                "category":"ETF", "market_value":"100", "holding_profit":"0", "return_rate":"0"})
+        status, data = self.post("/api/allocation-plan", {"monthly_budget":"100",
+            "target_weights":{"000001":"100"}})
+        self.assertEqual(status, 400)
+        self.assertIn("覆盖", data["error"])
+        status, data = self.post("/api/allocation-plan", {"monthly_budget":"100",
+            "target_weights":{"000001":"60", "000002":"60"}})
+        self.assertEqual(status, 400)
+        self.assertIn("100%", data["error"])
+
+    def test_allocation_plan_stops_after_holding_is_cleared(self):
+        for code in ("000001", "000002"):
+            self.post("/api/holdings", {"code":code, "name":"基金"+code,
+                "category":"ETF", "market_value":"100", "holding_profit":"0", "return_rate":"0"})
+        self.post("/api/allocation-plan", {"monthly_budget":"100",
+            "target_weights":{"000001":"50", "000002":"50"}})
+        self.post("/api/holdings", {"code":"000002", "name":"基金000002",
+            "category":"ETF", "market_value":"0", "holding_profit":"0", "return_rate":"0"})
+        plan = self.get_json("/api/state")[1]["allocationPlan"]
+        self.assertFalse(plan["ready"])
+        self.assertTrue(plan["stale_targets"])
+        self.assertEqual(plan["allocated"], "0.00")
+
+    def test_allocation_plan_month_rollover_and_recent_drawdown_priority(self):
+        rows = [{"code":"000001", "name":"A", "market_value":"100",
+                 "public_market":{"day":"2026-10-08"},
+                 "drawdown_status":{"drawdown_pct":"20"}},
+                {"code":"000002", "name":"B", "market_value":"100",
+                 "public_market":{"day":"2026-09-01"},
+                 "drawdown_status":{"drawdown_pct":"30"}},
+                {"code":"000003", "name":"C", "market_value":"100"}]
+        settings={"monthly_budget":"100", "monthly_spent":"100", "spent_month":"2026-09",
+                  "target_weights":json.dumps({"000001":"40", "000002":"40", "000003":"20"})}
+        plan=allocation_plan.build_plan(rows,settings,date(2026,10,8))
+        self.assertEqual(plan["monthly_spent"], "0.00")
+        self.assertEqual(plan["allocated"], "100.00")
+        self.assertGreater(float(plan["rows"][0]["buy_amount"]), 50)
+        self.assertIsNone(plan["rows"][1]["drawdown_pct"])
+
+    def test_allocation_plan_is_in_encrypted_sync_payload(self):
+        self.post("/api/holdings", {"code":"000001", "name":"基金A", "category":"ETF",
+            "market_value":"100", "holding_profit":"0", "return_rate":"0"})
+        self.post("/api/allocation-plan", {"monthly_budget":"200", "monthly_spent":"30",
+            "target_weights":{"000001":"100"}})
+        payload=sync_engine.export_data(server.DB)
+        self.assertEqual(payload["tables"]["allocation_plan"][0]["monthly_budget"], "200.00")
+        merged=sync_engine.merge_vaults(payload,{"tables":{}})
+        self.assertEqual(merged["tables"]["allocation_plan"][0]["target_weights"],
+                         '{"000001": "100.00"}')
+        restored_db=Path(self.folder.name)/"restored.db"
+        with patch.object(server,"DB",restored_db):
+            with server.db():
+                pass
+        sync_engine.import_data(restored_db,merged)
+        with server.sqlite3.connect(restored_db) as conn:
+            self.assertEqual(conn.execute("SELECT monthly_spent FROM allocation_plan WHERE id=1").fetchone()[0],
+                             "30.00")
 
     def test_etf_august_purchase_october_clear_and_date_paging(self):
         self.assertEqual(self.post("/api/accounts", {"name":"可用现金", "account_type":"证券账户",

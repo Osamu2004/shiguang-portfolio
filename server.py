@@ -24,6 +24,7 @@ from pathlib import Path
 
 import certifi
 import ai_portfolio
+import allocation_plan
 import holding_calendar
 
 ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
@@ -94,6 +95,10 @@ def db():
       drawdown_thresholds TEXT NOT NULL DEFAULT '10,20,35,50',
       drawdown_allocations TEXT NOT NULL DEFAULT '20,20,30,30',
       updated_at TEXT NOT NULL)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS allocation_plan (
+      id INTEGER PRIMARY KEY CHECK(id=1),monthly_budget TEXT NOT NULL DEFAULT '0.00',
+      monthly_spent TEXT NOT NULL DEFAULT '0.00',spent_month TEXT NOT NULL DEFAULT '',
+      target_weights TEXT NOT NULL DEFAULT '{}',updated_at TEXT NOT NULL)""")
     strategy_columns = {row[1] for row in conn.execute("PRAGMA table_info(fund_strategies)")}
     if "drawdown_budget" not in strategy_columns:
         conn.execute("ALTER TABLE fund_strategies ADD COLUMN drawdown_budget TEXT NOT NULL DEFAULT '0'")
@@ -539,6 +544,8 @@ class Handler(SimpleHTTPRequestHandler):
                     row["drawdown_status"]=drawdown_status(row["investment_strategy"],market_data,history)
                     row["planned_investment"]=str(planned_investment(row["investment_strategy"],market_data,history).quantize(Decimal("0.01")))
                     row["inferred_flow"]=inferred_holding_flow(conn,row.get("code") or "name:"+row["name"])
+                plan_settings=conn.execute("SELECT * FROM allocation_plan WHERE id=1").fetchone()
+                allocation=allocation_plan.build_plan(rows,dict(plan_settings) if plan_settings else None)
             total = sum(Decimal(r["market_value"]) for r in rows)
             account_total = sum(Decimal(r["balance"]) for r in accounts)
             reported_profit = sum(Decimal(r["holding_profit"]) for r in rows)
@@ -549,7 +556,8 @@ class Handler(SimpleHTTPRequestHandler):
             self.json_response({"holdings": rows, "archivedHoldings": archived, "accounts": accounts,
                 "total": str(total + account_total), "fundTotal": str(total),
                 "accountTotal": str(account_total), "totalCost": None,
-                "profit": str(reported_profit), "fundReturnRate": return_rate, "snapshots": snapshots})
+                "profit": str(reported_profit), "fundReturnRate": return_rate, "snapshots": snapshots,
+                "allocationPlan": allocation})
             return
         if self.path == "/api/manage":
             with db() as conn:
@@ -567,7 +575,7 @@ class Handler(SimpleHTTPRequestHandler):
         if self.path == "/api/export":
             with db() as conn:
                 payload = {
-                    "schemaVersion": 2,
+                    "schemaVersion": 3,
                     "exportedAt": datetime.now().isoformat(),
                     "accounts": [dict(r) for r in conn.execute("SELECT * FROM accounts ORDER BY id")],
                     "holdings": [dict(r) for r in conn.execute("SELECT * FROM holdings ORDER BY id")],
@@ -576,6 +584,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "fundMarketDaily": [dict(r) for r in conn.execute("SELECT * FROM fund_market_daily ORDER BY day,code")],
                     "marketIndexDaily": [dict(r) for r in conn.execute("SELECT * FROM market_index_daily ORDER BY day,code")],
                     "fundStrategies": [dict(r) for r in conn.execute("SELECT * FROM fund_strategies ORDER BY code")],
+                    "allocationPlan": [dict(r) for r in conn.execute("SELECT * FROM allocation_plan ORDER BY id")],
                     "userPreferences": [dict(r) for r in conn.execute("SELECT id,show_health,updated_at FROM user_preferences ORDER BY id")],
                     "healthDaily": [dict(r) for r in conn.execute("SELECT * FROM health_daily ORDER BY day")],
                     "portfolioSnapshots": [dict(r) for r in conn.execute("SELECT * FROM portfolio_snapshots ORDER BY day")],
@@ -608,6 +617,26 @@ class Handler(SimpleHTTPRequestHandler):
         if self.reject_untrusted_request():
             return
         try:
+            if self.path == "/api/allocation-plan":
+                raw=self.read_json()
+                budget=money(raw.get("monthly_budget",0))
+                spent=money(raw.get("monthly_spent",0))
+                now=datetime.now().isoformat(timespec="microseconds")
+                month=now[:7]
+                with db() as conn:
+                    holdings=[dict(r) for r in conn.execute(
+                        "SELECT code,name FROM holdings WHERE archived_at IS NULL ORDER BY id")]
+                    targets=allocation_plan.clean_targets(raw.get("target_weights",{}),holdings)
+                    conn.execute("""INSERT INTO allocation_plan
+                        (id,monthly_budget,monthly_spent,spent_month,target_weights,updated_at)
+                        VALUES(1,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+                        monthly_budget=excluded.monthly_budget,monthly_spent=excluded.monthly_spent,
+                        spent_month=excluded.spent_month,target_weights=excluded.target_weights,
+                        updated_at=excluded.updated_at""",
+                        (budget,spent,month,json.dumps(targets,ensure_ascii=False,sort_keys=True),now))
+                    audit(conn,"ALLOCATION_PLAN_SAVED","保存月度投入与目标权重",
+                          {"month":month,"monthly_budget":budget,"monthly_spent":spent},now)
+                self.json_response({"ok":True}); return
             if self.path == "/api/holdings":
                 raw = self.read_json()
                 item = clean_item(raw)

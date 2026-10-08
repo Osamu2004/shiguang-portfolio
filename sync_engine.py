@@ -46,7 +46,7 @@ LEGACY_SCHOLAR_SCHEMAS = {
     "scholar_settings": "CREATE TABLE IF NOT EXISTS scholar_settings (id INTEGER PRIMARY KEY CHECK(id=1),profile_url TEXT NOT NULL,auto_open INTEGER NOT NULL DEFAULT 1,updated_at TEXT NOT NULL)",
 }
 SYNC_TABLES = ("accounts", "holdings", "holding_snapshots", "stock_snapshots", "fund_market_daily", "market_index_daily",
-               "fund_strategies", "user_preferences", "health_daily", "portfolio_snapshots",
+               "fund_strategies", "allocation_plan", "user_preferences", "health_daily", "portfolio_snapshots",
                "audit_logs", "deleted_records")
 
 
@@ -115,7 +115,7 @@ def _record_key(table, row):
     if table == "stock_snapshots": return str(row["symbol"]) + ":" + str(row["day"])
     if table in ("fund_market_daily", "market_index_daily"): return str(row["code"]) + ":" + str(row["day"])
     if table == "fund_strategies": return str(row["code"])
-    if table == "user_preferences": return str(row["id"])
+    if table in ("user_preferences", "allocation_plan"): return str(row["id"])
     if table in RETIRED_TABLE_KEYS: return ":".join(str(row[name]) for name in RETIRED_TABLE_KEYS[table])
     if table == "audit_logs": return str(row["id"])
     if table == "deleted_records": return str(row["table_name"]) + ":" + str(row["record_key"])
@@ -213,6 +213,11 @@ def import_data(db_path, payload):
               row.get("code"),row.get("mode","none"),row.get("daily_amount","0"),row.get("per_drop_pct_amount","0"),
               row.get("max_daily_amount","0"),row.get("drawdown_budget","0"),row.get("executed_drawdown_stage",0),
               row.get("drawdown_thresholds","10,20,35,50"),row.get("drawdown_allocations","20,20,30,30"),row.get("updated_at")))
+        for row in payload["tables"].get("allocation_plan", []):
+            conn.execute("""INSERT OR REPLACE INTO allocation_plan
+              (id,monthly_budget,monthly_spent,spent_month,target_weights,updated_at)
+              VALUES(?,?,?,?,?,?)""", tuple(row.get(k) for k in
+              ("id","monthly_budget","monthly_spent","spent_month","target_weights","updated_at")))
         for row in payload["tables"].get("user_preferences", []):
             conn.execute("""INSERT OR REPLACE INTO user_preferences
               (id,show_health,updated_at) VALUES(?,?,?)""", tuple(row.get(k) for k in
