@@ -20,11 +20,11 @@ window.renderAllocationPlan = function renderAllocationPlan() {
   const rows = plan.rows || [];
   document.querySelector('#allocationTargetRows').innerHTML = rows.length ? rows.map(row => {
     const ruleHint = row.market_stale ? '公开净值已过期，请先更新行情'
-      : row.rule_limit != null ? `本次规则上限 ${money(row.rule_limit)}`
+      : row.rule_limit != null ? `本次规则上限 <span class="money">${money(row.rule_limit)}</span>`
       : '本次由月度余额和目标权重决定';
     return `
     <div class="allocation-target-row">
-      <div class="allocation-fund"><b>${escapeHtml(row.name)}</b><small>${escapeHtml(row.code || '无代码')} · 当前 ${money(row.current_value)}</small><div class="allocation-rule"><span>${escapeHtml(row.strategy_label || '按组合计划')} · ${escapeHtml(ruleHint)}</span>${row.code ? `<button type="button" class="fund-actions" data-strategy-code="${escapeHtml(row.code)}">设置规则</button>` : ''}</div></div>
+      <div class="allocation-fund"><b>${escapeHtml(row.name)}</b><small>${escapeHtml(row.code || '无代码')} · 当前 <span class="money">${money(row.current_value)}</span></small><div class="allocation-rule"><span>${escapeHtml(row.strategy_label || '按组合计划')} · ${ruleHint}</span>${row.code ? `<button type="button" class="fund-actions" data-strategy-code="${escapeHtml(row.code)}">设置规则</button>` : ''}</div></div>
       <label><span class="sr-only">${escapeHtml(row.name)}目标权重</span><input data-target-key="${escapeHtml(row.key)}" type="number" min="0" max="100" step="0.01" inputmode="decimal" value="${escapeHtml(row.target_weight)}" required><span>%</span></label>
       <div class="allocation-weight-change">${Number(row.before_weight).toFixed(2)}% <span>→</span> ${plan.ready ? Number(row.after_weight).toFixed(2) + '%' : '待设置'}</div>
       <div class="allocation-buy money">${plan.ready ? money(row.buy_amount) : '—'}</div>

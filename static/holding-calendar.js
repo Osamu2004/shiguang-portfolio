@@ -16,8 +16,8 @@ function renderHoldingCalendar(view,syncFormDay=true){
   $('#holdingCalendarRows').innerHTML=view.positions.length?view.positions.map(x=>{
     const profit=Number(x.holding_profit),rate=Number(x.return_rate);
     const metrics=x.closed
-      ?`<div class="calendar-metrics"><span class="calendar-value money">市值 ${money(0)}</span><span class="calendar-closed-rate">已清仓 · 持有收益率不适用</span></div>`
-      :`<div class="calendar-metrics"><span class="calendar-value money">市值 ${money(x.market_value)}</span><span class="calendar-profit ${marketClass(profit)}">持有收益 ${profit>=0?'+':''}${money(profit)}</span><span class="calendar-rate ${marketClass(rate)}">持有收益率 ${rate>=0?'+':''}${rate.toFixed(2)}%</span></div>`;
+      ?`<div class="calendar-metrics"><span class="calendar-value">市值 <span class="money">${money(0)}</span></span><span class="calendar-closed-rate">已清仓 · 持有收益率不适用</span></div>`
+      :`<div class="calendar-metrics"><span class="calendar-value">市值 <span class="money">${money(x.market_value)}</span></span><span class="calendar-profit ${marketClass(profit)}">持有收益 <span class="money">${profit>=0?'+':''}${money(profit)}</span></span><span class="calendar-rate ${marketClass(rate)}">持有收益率 ${rate>=0?'+':''}${rate.toFixed(2)}%</span></div>`;
     return `<div class="calendar-row ${x.closed?'closed':''}"><div class="calendar-identity"><b>${escapeHtml(x.name)}</b><small>${escapeHtml(x.code||'无代码')} · ${escapeHtml(x.category)} · ${x.closed?'已清仓'+(x.closed_on?'于 '+escapeHtml(x.closed_on):''):'最近盘点 '+escapeHtml(x.day)}</small></div>${metrics}<button type="button" data-key="${escapeHtml(x.holding_key)}">填写快照</button></div>`;
   }).join(''):'<div class="empty">截至该日期没有基金或 ETF 持仓。</div>';
 }

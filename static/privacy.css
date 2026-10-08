@@ -1,0 +1,60 @@
+.privacy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.privacy svg {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.privacy .privacy-slash { display: none; }
+.privacy[aria-pressed="true"] {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
+}
+.privacy[aria-pressed="true"]:hover { background: var(--forest); }
+.privacy[aria-pressed="true"] .privacy-slash { display: block; }
+.privacy:focus-visible { outline: 2px solid var(--brass-deep); outline-offset: 2px; }
+
+.private .money,
+.private .amount {
+  position: relative;
+  filter: none;
+  visibility: hidden;
+  user-select: none;
+}
+.private .money::after,
+.private .amount::after {
+  content: "••••";
+  position: absolute;
+  top: 0;
+  right: 0;
+  visibility: visible;
+  color: var(--ink);
+  white-space: nowrap;
+  font: inherit;
+}
+.private #trendChart .trend-y-label { visibility: hidden; }
+.private #trendChart svg { pointer-events: none; }
+.private :is(
+  #accountForm input[name="balance"],
+  #holdingForm input[name="market_value"],
+  #holdingForm input[name="holding_profit"],
+  #allocationPlanForm input[name="monthly_budget"],
+  #allocationPlanForm input[name="monthly_spent"],
+  #strategyForm input[name="daily_amount"],
+  #strategyForm input[name="per_drop_pct_amount"],
+  #strategyForm input[name="max_daily_amount"],
+  #strategyForm input[name="drawdown_budget"]
+) { filter: blur(7px); }
