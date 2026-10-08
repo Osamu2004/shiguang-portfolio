@@ -2,10 +2,17 @@
 
 import json
 from datetime import date
-from decimal import Decimal, InvalidOperation, ROUND_DOWN
+from decimal import Decimal, InvalidOperation, ROUND_DOWN, ROUND_UP
 
 
 CENT = Decimal("0.01")
+STRATEGY_LABELS = {
+    "allocation": "按组合计划",
+    "none": "暂停买入",
+    "daily": "每日固定金额",
+    "drop": "按日跌幅投入",
+    "drawdown": "按高点回撤投入",
+}
 
 
 def holding_key(holding):
@@ -42,7 +49,7 @@ def _money(cents):
 
 
 def build_plan(holdings, settings, today=None):
-    """Buy only underweight current holdings, within this month's remaining budget."""
+    """One buy preview, limited by target gaps, monthly cash and fund rules."""
     today = today or date.today()
     month = today.strftime("%Y-%m")
     settings = settings or {}
@@ -60,6 +67,9 @@ def build_plan(holdings, settings, today=None):
     total = sum(values)
     buys = [0] * len(holdings)
     signals = []
+    rule_limits = []
+    strategy_modes = []
+    stale_markets = []
     for row in holdings:
         # A stale or missing public NAV never changes the purchase priority.
         market_day = (row.get("public_market") or {}).get("day")
@@ -67,6 +77,17 @@ def build_plan(holdings, settings, today=None):
             age = (today - date.fromisoformat(market_day)).days
         except (ValueError, TypeError):
             age = 999
+        mode = (row.get("investment_strategy") or {}).get("mode", "allocation")
+        stale_market = mode in ("drop", "drawdown") and not 0 <= age <= 7
+        if mode == "allocation":
+            limit = None
+        elif mode == "none" or stale_market or mode not in STRATEGY_LABELS:
+            limit = 0
+        else:
+            limit = max(0, _cents(row.get("planned_investment") or 0))
+        strategy_modes.append(mode)
+        rule_limits.append(limit)
+        stale_markets.append(stale_market)
         raw_drawdown = (row.get("drawdown_status") or {}).get("drawdown_pct")
         try:
             drawdown = Decimal(str(raw_drawdown)) if 0 <= age <= 7 else Decimal(0)
@@ -75,13 +96,32 @@ def build_plan(holdings, settings, today=None):
         signals.append(max(Decimal(0), min(drawdown, Decimal(50))))
 
     if ready and remaining:
-        final_total = total + remaining
-        deficits = [max(0, int((Decimal(final_total) * Decimal(str(targets[key])) / 100 - value)
-                               .to_integral_value(rounding=ROUND_DOWN)))
-                    for key, value in zip(keys, values)]
-        # Each extra cent goes to the largest weighted remaining gap. Recompute
-        # proportions after a gap is filled, so no purchase overshoots its target.
-        left = remaining
+        weights = [Decimal(str(targets[key])) / 100 for key in keys]
+
+        def capacities(spend):
+            future_total = Decimal(total + spend)
+            gaps = [max(Decimal(0), future_total * weight - value)
+                    for weight, value in zip(weights, values)]
+            return [min(gap, Decimal(limit)) if limit is not None else gap
+                    for gap, limit in zip(gaps, rule_limits)]
+
+        # Find the largest spend whose target gaps and fund-rule limits can
+        # absorb it. Using the entire monthly balance as the future total when
+        # some fund is paused would make the other funds exceed their targets.
+        low, high = 0, remaining
+        while low < high:
+            candidate = (low + high + 1) // 2
+            if sum(capacities(candidate)) >= candidate:
+                low = candidate
+            else:
+                high = candidate - 1
+        spend = low
+        # Individual target gaps may contain fractions of a cent. Round each
+        # up by at most one cent so the combined plan remains cent-executable.
+        deficits = [int(gap.to_integral_value(rounding=ROUND_UP)) for gap in capacities(spend)]
+        # Split the feasible spend by weighted target gap; only cent rounding
+        # can put a resulting weight fractionally above its target.
+        left = spend
         while left and any(deficits):
             scores = [Decimal(gap) * (Decimal(1) + signal / 50)
                       for gap, signal in zip(deficits, signals)]
@@ -107,6 +147,10 @@ def build_plan(holdings, settings, today=None):
         rows.append({"key": key, "name": row["name"], "code": row.get("code"),
                      "current_value": _money(values[i]), "buy_amount": _money(buys[i]),
                      "target_weight": str(targets.get(key, "0")),
+                     "strategy_mode": strategy_modes[i],
+                     "strategy_label": STRATEGY_LABELS.get(strategy_modes[i], "暂停买入"),
+                     "rule_limit": _money(rule_limits[i]) if rule_limits[i] is not None else None,
+                     "market_stale": stale_markets[i],
                      "before_weight": str((Decimal(values[i]) * 100 / total).quantize(CENT)) if total else "0.00",
                      "after_weight": str((Decimal(values[i] + buys[i]) * 100 / after_total).quantize(CENT)) if after_total else "0.00",
                      "drawdown_pct": str(signals[i].quantize(CENT)) if signals[i] else None})

@@ -169,26 +169,15 @@ form label {
 }
 .fund-sparkline .fund-empty-label { font-size: 8px; }
 .fund-sparkline .fund-single-point { fill: currentColor; }
-.planned-investment {
-  padding: 0;
-  border: 0;
-  background: transparent;
-}
-.planned-investment.due {
-  border: 0;
-  background: transparent;
-}
-.planned-investment.due b { color: var(--rust); }
-
 .fund-row {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) 150px 120px 110px 110px;
+  grid-template-columns: minmax(180px, 1fr) 150px 120px 110px;
   gap: 16px;
   align-items: center;
 }
 .fund-columns {
   display: grid;
-  grid-template-columns: minmax(180px, 1fr) 150px 120px 110px 110px 64px;
+  grid-template-columns: minmax(180px, 1fr) 150px 120px 110px;
   gap: 16px;
   align-items: center;
   padding: 9px 20px;
@@ -202,20 +191,13 @@ form label {
 .fund-columns span:nth-child(n+2) { text-align: right; }
 .fund-columns span:last-child { text-align: center; }
 .fund-row.manage-row {
-  grid-template-columns: minmax(180px, 1fr) 150px 120px 110px 110px 64px !important;
+  grid-template-columns: minmax(180px, 1fr) 150px 120px 110px !important;
   padding: 15px 20px;
 }
 .manage-row .fund-identity { grid-column: 1; grid-row: 1; }
 .manage-row .fund-chart { grid-column: 2; grid-row: 1; }
 .manage-row .fund-value { grid-column: 3; grid-row: 1; }
-.manage-row .planned-investment { grid-column: 4; grid-row: 1; }
-.manage-row .share { grid-column: 5; grid-row: 1; }
-.manage-row .fund-actions {
-  grid-column: 6 !important;
-  grid-row: 1 !important;
-  align-self: center;
-  justify-self: end;
-}
+.manage-row .share { grid-column: 4; grid-row: 1; }
 .fund-chart { display: flex; justify-content: flex-end; }
 .fund-value { min-width: 0 !important; text-align: right; }
 .fund-row .share { line-height: 1.45; }
@@ -239,9 +221,7 @@ form label {
   .manage-row .fund-identity { grid-column: 1; grid-row: 1; }
   .manage-row .fund-chart { grid-column: 2; grid-row: 1; }
   .manage-row .fund-value { grid-column: 1; grid-row: 2; }
-  .manage-row .planned-investment { grid-column: 2; grid-row: 2; }
-  .manage-row .share { grid-column: 1; grid-row: 3; }
-  .manage-row .fund-actions { grid-column: 2 !important; grid-row: 3 !important; }
+  .manage-row .share { grid-column: 2; grid-row: 2; }
   .fund-row .fund-value { text-align: left; }
   .fund-row .share { display: block; text-align: left; }
 }
@@ -285,9 +265,7 @@ form label {
   .fund-row .fund-identity { grid-column: 1 / -1; }
   .fund-row .fund-chart { grid-column: 2; grid-row: 2; }
   .fund-row .fund-value { grid-column: 1; grid-row: 2; }
-  .fund-row .planned-investment { grid-column: 2; grid-row: 3; }
-  .fund-row .share { grid-column: 1; grid-row: 3; }
-  .manage-row .fund-actions { grid-column: 1 / -1 !important; grid-row: 4 !important; }
+  .fund-row .share { grid-column: 1 / -1; grid-row: 3; }
   .user-menu { right: 12px; }
   #toast { right: 12px; left: 12px; bottom: 12px; overflow-wrap: anywhere; }
 }
