@@ -402,11 +402,12 @@ def inferred_holding_flow(conn, holding_key):
     current_units=Decimal(current["market_value"])/navs[1][1]
     net_units=current_units-previous_units
     estimated_amount=net_units*navs[1][1]
+    rounded_amount=abs(estimated_amount).quantize(Decimal("0.01"))
     return {"status":"estimated","from_day":previous["day"],"to_day":current["day"],
       "previous_nav_day":navs[0][0],"current_nav_day":navs[1][0],
       "net_units":str(net_units.quantize(Decimal("0.0001"))),
-      "net_amount":str(abs(estimated_amount).quantize(Decimal("0.01"))),
-      "direction":"buy" if net_units>0 else "sell" if net_units<0 else "none"}
+      "net_amount":str(rounded_amount),
+      "direction":"none" if rounded_amount==0 else "buy" if net_units>0 else "sell"}
 
 
 class Handler(SimpleHTTPRequestHandler):

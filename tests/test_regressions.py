@@ -178,6 +178,17 @@ class RegressionTest(unittest.TestCase):
         self.assertEqual(self.post("/api/holdings", {**second, "market_value":"100", "holding_profit":"100", "return_rate":"100"})[0], 200)
         self.assertIsNone(self.get_json("/api/state")[1]["fundReturnRate"])
 
+    def test_sub_cent_nav_rounding_does_not_report_a_zero_yuan_sale(self):
+        with server.db() as conn:
+            for day, nav in (("2026-09-01", "3.2164"), ("2026-09-02", "3.2165")):
+                conn.execute("INSERT INTO fund_market_daily VALUES(?,?,?,?,?,?,?)",
+                             ("000218", day, nav, nav, "0", "test", day))
+                conn.execute("INSERT INTO holding_snapshots VALUES(?,?,?,?,?,?,?,?,?)",
+                             (day, "000218", "000218", "测试黄金基金", "2.64", "0", "0", "test", day))
+            flow = server.inferred_holding_flow(conn, "000218")
+        self.assertEqual(flow["net_amount"], "0.00")
+        self.assertEqual(flow["direction"], "none")
+
     def test_deleting_etf_clear_snapshot_restores_current_holding(self):
         etf = {"code":"510300", "name":"沪深300 ETF", "category":"ETF",
                "holding_profit":"0", "return_rate":"0"}
