@@ -42,6 +42,8 @@ python3 server.py
 
 浏览器打开 <http://127.0.0.1:8787>。
 
+本机 AI 工具可通过版本化只读 JSON 接口或独立命令行读取当前持仓及按日期记录的 ETF 快照，详见 [AI 只读持仓接口](docs/ai-api.md)。App 未启动时也可运行 `python3 tools/read_portfolio.py`。
+
 ## 测试
 
 ```bash

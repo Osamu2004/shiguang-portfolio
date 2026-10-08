@@ -23,6 +23,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import certifi
+import ai_portfolio
 import holding_calendar
 
 ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
@@ -463,6 +464,25 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):
         if self.reject_untrusted_request():
+            return
+        if self.path == "/api/ai/v1/portfolio":
+            try:
+                self.json_response(ai_portfolio.current_portfolio(DB))
+            except (FileNotFoundError, sqlite3.Error):
+                self.json_response({"error": "持仓数据暂时不可读取"}, 503)
+            return
+        if self.path.startswith("/api/ai/v1/holdings?"):
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query,
+                                          keep_blank_values=True)
+            if set(query) != {"day"} or len(query["day"]) != 1:
+                self.json_response({"error": "请提供唯一的 day=YYYY-MM-DD 参数"}, 400)
+                return
+            try:
+                self.json_response(ai_portfolio.dated_holdings(DB, query["day"][0]))
+            except ValueError as exc:
+                self.json_response({"error": str(exc)}, 400)
+            except (FileNotFoundError, sqlite3.Error):
+                self.json_response({"error": "持仓数据暂时不可读取"}, 503)
             return
         if self.path.startswith("/api/funds/lookup?"):
             code = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("code", [""])[0]
