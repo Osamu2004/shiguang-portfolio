@@ -18,13 +18,18 @@ window.renderAllocationPlan = function renderAllocationPlan() {
   allocationForm.elements.monthly_budget.value = plan.monthly_budget || '0.00';
   allocationForm.elements.monthly_spent.value = plan.monthly_spent || '0.00';
   const rows = plan.rows || [];
-  document.querySelector('#allocationTargetRows').innerHTML = rows.length ? rows.map(row => `
+  document.querySelector('#allocationTargetRows').innerHTML = rows.length ? rows.map(row => {
+    const ruleHint = row.market_stale ? '公开净值已过期，请先更新行情'
+      : row.rule_limit != null ? `本次规则上限 ${money(row.rule_limit)}`
+      : '本次由月度余额和目标权重决定';
+    return `
     <div class="allocation-target-row">
-      <div class="allocation-fund"><b>${escapeHtml(row.name)}</b><small>${escapeHtml(row.code || '无代码')} · 当前 ${money(row.current_value)}</small></div>
+      <div class="allocation-fund"><b>${escapeHtml(row.name)}</b><small>${escapeHtml(row.code || '无代码')} · 当前 ${money(row.current_value)}</small><div class="allocation-rule"><span>${escapeHtml(row.strategy_label || '按组合计划')} · ${escapeHtml(ruleHint)}</span>${row.code ? `<button type="button" class="fund-actions" data-strategy-code="${escapeHtml(row.code)}">设置规则</button>` : ''}</div></div>
       <label><span class="sr-only">${escapeHtml(row.name)}目标权重</span><input data-target-key="${escapeHtml(row.key)}" type="number" min="0" max="100" step="0.01" inputmode="decimal" value="${escapeHtml(row.target_weight)}" required><span>%</span></label>
       <div class="allocation-weight-change">${Number(row.before_weight).toFixed(2)}% <span>→</span> ${plan.ready ? Number(row.after_weight).toFixed(2) + '%' : '待设置'}</div>
       <div class="allocation-buy money">${plan.ready ? money(row.buy_amount) : '—'}</div>
-    </div>`).join('') : '<div class="empty compact">先在上方记录基金或 ETF 持仓，再设置目标权重。</div>';
+    </div>`;
+  }).join('') : '<div class="empty compact">先在上方记录基金或 ETF 持仓，再设置目标权重。</div>';
   updateAllocationDraft();
   const summary = document.querySelector('#allocationPlanSummary');
   if (!rows.length) {
@@ -37,9 +42,14 @@ window.renderAllocationPlan = function renderAllocationPlan() {
     const message = Number(plan.remaining) <= 0
       ? '本月没有剩余额度。请核对已投入金额或调整预算。'
       : buys.length ? '' : '当前没有可执行的买入建议。';
-    summary.innerHTML = `<div class="allocation-plan-totals"><div><small>本月剩余额度</small><strong class="money">${money(plan.remaining)}</strong></div><div><small>建议投入</small><strong class="money">${money(plan.allocated)}</strong></div><div><small>未分配</small><strong class="money">${money(plan.unallocated)}</strong></div></div>${message ? `<p>${message}</p>` : `<div class="allocation-order"><b>本月建议买入顺序</b>${buys.map((row, index) => `<div><span class="allocation-rank">${index + 1}</span><span>${escapeHtml(row.name)}${row.drawdown_pct ? `<small>近期净值回撤 ${escapeHtml(row.drawdown_pct)}% · 已提高优先级</small>` : ''}</span><strong class="money">${money(row.buy_amount)}</strong></div>`).join('')}</div>`}`;
+    summary.innerHTML = `<div class="allocation-plan-totals"><div><small>本月剩余额度</small><strong class="money">${money(plan.remaining)}</strong></div><div><small>本次建议投入</small><strong class="money">${money(plan.allocated)}</strong></div><div><small>未分配</small><strong class="money">${money(plan.unallocated)}</strong></div></div>${message ? `<p>${message}</p>` : `<div class="allocation-order"><b>本次建议买入顺序</b>${buys.map((row, index) => `<div><span class="allocation-rank">${index + 1}</span><span>${escapeHtml(row.name)}${row.drawdown_pct ? `<small>近期净值回撤 ${escapeHtml(row.drawdown_pct)}% · 已提高优先级</small>` : ''}</span><strong class="money">${money(row.buy_amount)}</strong></div>`).join('')}</div>`}`;
   }
 };
+
+document.querySelector('#allocationTargetRows').addEventListener('click', event => {
+  const button = event.target.closest('[data-strategy-code]');
+  if (button) openFundStrategy(button.dataset.strategyCode, button);
+});
 
 allocationForm.addEventListener('input', updateAllocationDraft);
 allocationForm.addEventListener('submit', async event => {
@@ -56,7 +66,7 @@ allocationForm.addEventListener('submit', async event => {
   try {
     await api('/api/allocation-plan', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
     await load();
-    toast('月度配置计划已保存');
+    toast('定投计划已保存');
   } catch (error) {
     toast(error.message);
   } finally {

@@ -332,7 +332,7 @@ def drawdown_status(strategy, market, history=None):
 
 
 def planned_investment(strategy, market, history=None):
-    if not strategy or strategy["mode"] == "none": return Decimal("0")
+    if not strategy or strategy["mode"] in ("none", "allocation"): return Decimal("0")
     if strategy["mode"] == "daily": return Decimal(strategy["daily_amount"])
     if strategy["mode"] == "drawdown":
         status=drawdown_status(strategy,market,history); stage=status["triggered_stage"]
@@ -551,12 +551,14 @@ class Handler(SimpleHTTPRequestHandler):
                     history=[dict(x) for x in conn.execute("SELECT day,unit_nav,daily_change_pct FROM fund_market_daily WHERE code=? ORDER BY day DESC LIMIT 10000",(row.get("code"),))]
                     row["public_market_history"]=list(reversed(history))
                     strategy=conn.execute("SELECT * FROM fund_strategies WHERE code=?",(row.get("code"),)).fetchone()
-                    row["investment_strategy"]=dict(strategy) if strategy else {"mode":"none","daily_amount":"0","per_drop_pct_amount":"0","max_daily_amount":"0","drawdown_budget":"0","executed_drawdown_stage":0,"drawdown_thresholds":"10,20,35,50","drawdown_allocations":"20,20,30,30"}
+                    row["investment_strategy"]=dict(strategy) if strategy else {"mode":"allocation","daily_amount":"0","per_drop_pct_amount":"0","max_daily_amount":"0","drawdown_budget":"0","executed_drawdown_stage":0,"drawdown_thresholds":"10,20,35,50","drawdown_allocations":"20,20,30,30"}
                     row["drawdown_status"]=drawdown_status(row["investment_strategy"],market_data,history)
                     row["planned_investment"]=str(planned_investment(row["investment_strategy"],market_data,history).quantize(Decimal("0.01")))
                     row["inferred_flow"]=inferred_holding_flow(conn,row.get("code") or "name:"+row["name"])
                 plan_settings=conn.execute("SELECT * FROM allocation_plan WHERE id=1").fetchone()
                 allocation=allocation_plan.build_plan(rows,dict(plan_settings) if plan_settings else None)
+                for row in rows:
+                    row.pop("planned_investment", None)  # Rule cap is shown only inside the unified plan.
             total = sum(Decimal(r["market_value"]) for r in rows)
             account_total = sum(Decimal(r["balance"]) for r in accounts)
             reported_profit = sum(Decimal(r["holding_profit"]) for r in rows)
@@ -748,7 +750,7 @@ class Handler(SimpleHTTPRequestHandler):
                 raw=self.read_json(); code=re.sub(r"\D", "", str(raw.get("code", "")))[:6]
                 mode=str(raw.get("mode", "none"));
                 if len(code)!=6: raise ValueError("基金代码不正确")
-                if mode not in ("none","daily","drop","drawdown"): raise ValueError("定投策略不正确")
+                if mode not in ("allocation","none","daily","drop","drawdown"): raise ValueError("定投策略不正确")
                 daily=money(raw.get("daily_amount",0)); per_pct=money(raw.get("per_drop_pct_amount",0)); cap=money(raw.get("max_daily_amount",0)); budget=money(raw.get("drawdown_budget",0))
                 thresholds=",".join(str(raw.get("drawdown_threshold_"+str(i),default)).strip() for i,default in enumerate((10,20,35,50),1))
                 allocations=",".join(str(raw.get("drawdown_allocation_"+str(i),default)).strip() for i,default in enumerate((20,20,30,30),1))

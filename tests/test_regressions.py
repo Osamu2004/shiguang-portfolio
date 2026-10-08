@@ -4,7 +4,7 @@ import json
 import shutil
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -65,6 +65,59 @@ class RegressionTest(unittest.TestCase):
         self.assertEqual({r["code"]:r["after_weight"] for r in plan["rows"]},
                          {"000001":"74.07", "000002":"25.93"})
         self.assertEqual(self.get_json("/api/state")[1]["accounts"][0]["balance"], "1000.00")
+
+    def test_fund_rules_limit_one_combined_plan_without_extra_buy_amount(self):
+        for code in ("000001", "000002"):
+            self.post("/api/holdings", {"code": code, "name": "基金" + code,
+                "category": "ETF", "market_value": "100", "holding_profit": "0", "return_rate": "0"})
+        self.assertEqual(self.post("/api/allocation-plan", {"monthly_budget": "100",
+            "target_weights": {"000001": "60", "000002": "40"}})[0], 200)
+        self.assertEqual(self.post("/api/funds/strategy", {"code": "000001", "mode": "daily",
+            "daily_amount": "10"})[0], 200)
+        self.assertEqual(self.post("/api/funds/strategy", {"code": "000002", "mode": "none"})[0], 200)
+        state = self.get_json("/api/state")[1]
+        plan = state["allocationPlan"]
+        self.assertEqual((plan["allocated"], plan["unallocated"]), ("10.00", "90.00"))
+        self.assertEqual({row["code"]: row["buy_amount"] for row in plan["rows"]},
+                         {"000001": "10.00", "000002": "0.00"})
+        self.assertEqual(plan["rows"][0]["rule_limit"], "10.00")
+        self.assertEqual(plan["rows"][1]["strategy_label"], "暂停买入")
+        self.assertTrue(all("planned_investment" not in row for row in state["holdings"]))
+        self.assertEqual(self.post("/api/funds/strategy", {"code": "000001", "mode": "allocation"})[0], 200)
+        self.assertEqual(self.get_json("/api/state")[1]["allocationPlan"]["allocated"], "50.00")
+
+    def test_rule_cap_does_not_push_another_fund_above_target_weight(self):
+        rows = [
+            {"code": "000001", "name": "A", "market_value": "100",
+             "investment_strategy": {"mode": "daily"}, "planned_investment": "10"},
+            {"code": "000002", "name": "B", "market_value": "100",
+             "investment_strategy": {"mode": "allocation"}},
+        ]
+        settings = {"monthly_budget": "100", "target_weights": '{"000001":"50","000002":"50"}'}
+        plan = allocation_plan.build_plan(rows, settings, date(2026, 10, 8))
+        self.assertEqual((plan["allocated"], plan["unallocated"]), ("20.00", "80.00"))
+        self.assertEqual([row["buy_amount"] for row in plan["rows"]], ["10.00", "10.00"])
+        self.assertEqual([row["after_weight"] for row in plan["rows"]], ["50.00", "50.00"])
+
+    def test_market_triggered_rule_waits_for_fresh_nav(self):
+        self.post("/api/holdings", {"code": "000001", "name": "测试 ETF", "category": "ETF",
+            "market_value": "100", "holding_profit": "0", "return_rate": "0"})
+        self.post("/api/allocation-plan", {"monthly_budget": "100", "target_weights": {"000001": "100"}})
+        self.post("/api/funds/strategy", {"code": "000001", "mode": "drop",
+            "per_drop_pct_amount": "100"})
+        today = date.today().isoformat()
+        with server.db() as conn:
+            conn.execute("INSERT INTO fund_market_daily VALUES(?,?,?,?,?,?,?)",
+                         ("000001", today, "1.00", "1.00", "-2", "test", today))
+        current = self.get_json("/api/state")[1]["allocationPlan"]
+        self.assertEqual(current["allocated"], "100.00")
+        self.assertFalse(current["rows"][0]["market_stale"])
+        with server.db() as conn:
+            conn.execute("UPDATE fund_market_daily SET day=? WHERE code=?",
+                         ((date.today() - timedelta(days=10)).isoformat(), "000001"))
+        stale = self.get_json("/api/state")[1]["allocationPlan"]
+        self.assertEqual((stale["allocated"], stale["unallocated"]), ("0.00", "100.00"))
+        self.assertTrue(stale["rows"][0]["market_stale"])
 
     def test_allocation_plan_rejects_incomplete_or_excess_weights(self):
         for code in ("000001", "000002"):
