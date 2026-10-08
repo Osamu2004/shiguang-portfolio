@@ -34,7 +34,8 @@ def main():
                   else ai_portfolio.current_portfolio(args.db))
     except (FileNotFoundError, ValueError) as exc:
         parser.exit(1, f"读取失败：{exc}\n")
-    json.dump(result, sys.stdout, ensure_ascii=False, indent=2)
+    # ASCII escapes keep redirected JSON valid under Windows legacy code pages.
+    json.dump(result, sys.stdout, ensure_ascii=True, indent=2)
     sys.stdout.write("\n")
 
 

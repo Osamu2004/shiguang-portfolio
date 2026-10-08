@@ -126,6 +126,7 @@ class RegressionTest(unittest.TestCase):
         with server.sqlite3.connect(restored_db) as conn:
             self.assertEqual(conn.execute("SELECT monthly_spent FROM allocation_plan WHERE id=1").fetchone()[0],
                              "30.00")
+        conn.close()
 
     def test_etf_august_purchase_october_clear_and_date_paging(self):
         self.assertEqual(self.post("/api/accounts", {"name":"可用现金", "account_type":"证券账户",
@@ -312,6 +313,7 @@ class RegressionTest(unittest.TestCase):
                 self.assertEqual(conn.execute("SELECT code FROM holdings").fetchone()[0], "000002")
                 self.assertEqual({row[0] for row in conn.execute("SELECT holding_key FROM holding_snapshots")}, {"000002"})
                 self.assertEqual(conn.execute("SELECT code FROM fund_strategies").fetchone()[0], "000002")
+            conn.close()
 
     def test_retired_scholar_data_survives_backup_and_sync_without_new_tables(self):
         with server.db() as conn:
@@ -351,6 +353,7 @@ class RegressionTest(unittest.TestCase):
             self.assertEqual(conn.execute("SELECT title FROM scholar_papers").fetchone()[0], "旧论文")
             self.assertEqual(conn.execute("SELECT citations FROM scholar_paper_snapshots").fetchone()[0], 7)
             self.assertEqual(conn.execute("SELECT auto_open FROM scholar_settings").fetchone()[0], 1)
+        conn.close()
 
     def test_static_path_stays_inside_static_directory(self):
         handler = server.Handler.__new__(server.Handler)
