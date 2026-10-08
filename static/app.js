@@ -5,7 +5,7 @@ function localDay(date=new Date()){return [date.getFullYear(),String(date.getMon
 const assetAxis=n=>{const value=Number(n||0),abs=Math.abs(value);if(abs>=1e8)return `¥${(value/1e8).toFixed(1)}亿`;if(abs>=1e4)return `¥${(value/1e4).toFixed(1)}万`;return `¥${Math.round(value).toLocaleString('zh-CN')}`};
 function toast(t){const e=$('#toast');e.textContent=t;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),2200)}
 function go(id){$$('.page').forEach(x=>x.classList.toggle('active',x.id===id));$$('aside nav button').forEach(x=>x.classList.toggle('active',x.dataset.page===id));$('#userMenu').hidden=true;$('#userMenuButton').setAttribute('aria-expanded','false');scrollTo(0,0)}
-$$('[data-page]').forEach(b=>b.onclick=()=>go(b.dataset.page));$$('[data-go]').forEach(b=>b.onclick=()=>go(b.dataset.go));
+$$('[data-page]').forEach(b=>b.onclick=()=>go(b.dataset.page));$$('[data-go]').forEach(b=>b.onclick=()=>{go(b.dataset.go);if(b.dataset.scrollTo)document.getElementById(b.dataset.scrollTo)?.scrollIntoView({block:'start'})});
 $('#privacy').onclick=()=>{document.body.classList.toggle('private');$('#privacy').textContent=document.body.classList.contains('private')?'显示金额':'隐藏金额'};
 $('#userMenuButton').onclick=e=>{e.stopPropagation();const menu=$('#userMenu'),open=menu.hidden;menu.hidden=!open;e.currentTarget.setAttribute('aria-expanded',String(open))};$('#userMenu').onclick=e=>e.stopPropagation();document.addEventListener('click',()=>{$('#userMenu').hidden=true;$('#userMenuButton').setAttribute('aria-expanded','false')});
 async function api(url,opt={}){const r=await fetch(url,opt),data=await r.json();if(!r.ok)throw Error(data.error||'请求失败');return data}
