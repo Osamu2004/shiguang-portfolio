@@ -17,6 +17,7 @@ class CoreTest(unittest.TestCase):
                 conn.execute("""CREATE TABLE fund_strategies (code TEXT PRIMARY KEY,mode TEXT NOT NULL,
                   daily_amount TEXT NOT NULL,per_drop_pct_amount TEXT NOT NULL,max_daily_amount TEXT NOT NULL,updated_at TEXT NOT NULL)""")
                 conn.execute("INSERT INTO fund_strategies VALUES(?,?,?,?,?,?)",("050025","daily","10","0","0","2026-08-26"))
+            conn.close()
             with mock.patch.object(app,"DATA",data),mock.patch.object(app,"DB",path):
                 with app.db() as conn:
                     row=conn.execute("SELECT * FROM fund_strategies WHERE code='050025'").fetchone()
@@ -37,6 +38,15 @@ class CoreTest(unittest.TestCase):
                     self.assertIn("audit_logs", tables)
                     self.assertIn("deleted_records", tables)
                     self.assertEqual(conn.execute("SELECT name FROM holdings WHERE code='050025'").fetchone()[0], "测试基金")
+
+    def test_database_context_releases_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "portfolio.db"
+            with mock.patch.object(app, "DATA", Path(folder)), mock.patch.object(app, "DB", path):
+                with app.db() as conn:
+                    self.assertEqual(conn.execute("SELECT 1").fetchone()[0], 1)
+                with self.assertRaises(sqlite3.ProgrammingError):
+                    conn.execute("SELECT 1")
 
     def test_holding_preserves_platform_values(self):
         item = app.clean_item({"name": "ETF", "category": "债券基金", "market_value": "5981.99",

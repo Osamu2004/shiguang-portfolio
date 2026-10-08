@@ -90,6 +90,8 @@ Windows需要在Windows上执行：
 build_windows.bat
 ```
 
+构建完成后打开 `dist\Shiguang\Shiguang.exe`。整个 `Shiguang` 文件夹必须一起保留，不要只复制 `.exe`；个人账本位于 `%LOCALAPPDATA%\Shiguang`，与程序文件分开。首次运行请确认系统已安装 Microsoft Edge WebView2 Runtime。
+
 macOS需要在macOS上执行：
 
 ```bash
@@ -98,7 +100,7 @@ bash build_macos.sh
 
 PyInstaller不支持在Linux上交叉构建真正的Windows `.exe` 或macOS `.app`，因此两种成品需分别在对应系统上打包。
 
-仓库已提供 `Desktop builds` GitHub Actions。在 Actions 页手动运行，即可于Windows和macOS托管机分别生成可下载构建产物。当前产物未进行Apple Developer ID或Windows Authenticode签名，仅适合个人测试。
+仓库已提供 `Desktop builds` GitHub Actions。在 Actions 页手动运行，即可于 Windows 和 macOS 托管机分别生成可下载构建产物；构建后还会使用临时账本检查打包程序的本地接口。当前产物未进行 Apple Developer ID 或 Windows Authenticode 签名，仅适合个人测试。
 
 桌面数据目录：
 

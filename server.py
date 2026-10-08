@@ -43,9 +43,19 @@ MARKET_INDICES = (
 )
 
 
+class ClosingConnection(sqlite3.Connection):
+    """Commit or roll back a transaction and release its file on every platform."""
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
 def db():
     DATA.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB))
+    conn = sqlite3.connect(str(DB), factory=ClosingConnection)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("""CREATE TABLE IF NOT EXISTS holdings (

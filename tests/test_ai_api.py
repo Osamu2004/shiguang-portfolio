@@ -2,6 +2,7 @@
 
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -80,8 +81,10 @@ class AiApiTest(unittest.TestCase):
         before = server.DB.read_bytes()
         script = Path(__file__).parents[1] / "tools" / "read_portfolio.py"
         result = subprocess.run([sys.executable, str(script), "--db", str(server.DB)],
-                                capture_output=True, text=True, check=True)
+                                capture_output=True, text=True, check=True,
+                                env={**os.environ, "PYTHONIOENCODING": "cp1252"})
         self.assertEqual(json.loads(result.stdout)["totals"]["assets"], "100.00")
+        self.assertEqual(json.loads(result.stdout)["holdings"][0]["name"], "测试 ETF")
         self.assertEqual(server.DB.read_bytes(), before)
         self.assertEqual(self.request("GET", "/api/ai/v1/holdings?day=bad")[0], 400)
         self.assertEqual(self.request("GET", "/api/ai/v1/holdings?day=2026-08-12&day=2026-08-13")[0], 400)

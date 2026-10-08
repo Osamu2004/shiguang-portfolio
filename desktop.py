@@ -26,9 +26,15 @@ def main():
     try:
         httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     except OSError:
-        webbrowser.open("http://127.0.0.1:%d" % port)
-        return
+        # A second launch must never open another process's ledger at this port.
+        httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     url = "http://127.0.0.1:%d" % httpd.server_port
+    if os.getenv("SHIGUANG_HEADLESS") == "1":
+        try:
+            httpd.serve_forever()
+        finally:
+            httpd.server_close()
+        return
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     try:
         import webview
@@ -39,6 +45,7 @@ def main():
         input("拾光已在浏览器打开，按回车退出…")
     finally:
         httpd.shutdown()
+        httpd.server_close()
 
 
 if __name__ == "__main__": main()

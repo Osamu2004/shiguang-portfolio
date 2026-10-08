@@ -28,7 +28,7 @@ class UpdaterTest(unittest.TestCase):
                 updater._request("https://example.invalid", "token")
 
     def test_macos_installer_restores_executable_permission(self):
-        source = Path(updater.__file__).read_text()
+        source = Path(updater.__file__).read_text(encoding="utf-8")
         self.assertIn('chmod +x', source)
         self.assertIn('/usr/bin/ditto', source)
 
